@@ -1,6 +1,6 @@
-use std::fmt;
 use chrono::{offset::Utc, DateTime, TimeZone};
 use serde_json;
+use std::fmt;
 
 /// Post status.
 pub enum PostStatus {
@@ -226,9 +226,9 @@ impl From<&serde_json::Value> for Post {
                 }
             }),
 
-            sources: v["children"]
-                .as_array()
-                .map_or_else(Vec::new, |v| v.iter().map(|v| v.as_str().unwrap().to_string()).collect()),
+            sources: v["children"].as_array().map_or_else(Vec::new, |v| {
+                v.iter().map(|v| v.as_str().unwrap().to_string()).collect()
+            }),
 
             has_notes: v["has_notes"].as_bool().unwrap(),
             has_comments: v["has_comments"].as_bool().unwrap(),

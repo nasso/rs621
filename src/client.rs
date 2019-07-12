@@ -1,8 +1,6 @@
 use super::error::{Error, Result};
 
-use reqwest::{
-    header::{self, HeaderMap, HeaderValue},
-};
+use reqwest::header::{self, HeaderMap, HeaderValue};
 
 /// Client struct.
 #[derive(Debug)]
@@ -16,26 +14,26 @@ impl Client {
     /// the name of your project.
     pub fn new(user_agent: impl AsRef<[u8]>) -> Result<Self> {
         if user_agent.as_ref() == b"" {
-            return Err(Error::CannotCreateClient(String::from("User Agent mustn't be empty")))
-        }
+            Err(Error::CannotCreateClient(String::from(
+                "User Agent mustn't be empty",
+            )))
+        } else {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::USER_AGENT,
+                HeaderValue::from_bytes(user_agent.as_ref())?,
+            );
 
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::USER_AGENT,
-            HeaderValue::from_bytes(user_agent.as_ref())?,
-        );
-
-        match reqwest::Client::builder()
-            .timeout(None)
-            .default_headers(headers)
-            .build()
-        {
-            Ok(c) => Ok(Client { client: c }),
-            Err(e) => Err(Error::CannotCreateClient(format!("{:?}", e))),
+            Ok(Client {
+                client: reqwest::Client::builder()
+                    .timeout(None)
+                    .default_headers(headers)
+                    .build()
+                    .unwrap(),
+            })
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
