@@ -3,6 +3,7 @@ use serde_json;
 use std::fmt;
 
 /// Post status.
+#[derive(Debug, PartialEq)]
 pub enum PostStatus {
     Active,
     Flagged,
@@ -21,24 +22,39 @@ impl PostStatus {
     }
 }
 
+impl Default for PostStatus {
+    fn default() -> PostStatus {
+        PostStatus::Pending
+    }
+}
+
 /// Post's rating.
+#[derive(Debug, PartialEq)]
 pub enum PostRating {
     Safe,
-    Questionnable,
+    Questionable,
     Explicit,
+}
+
+impl Default for PostRating {
+    fn default() -> PostRating {
+        // A default value doesn't make much sense here
+        PostRating::Explicit
+    }
 }
 
 impl fmt::Display for PostRating {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PostRating::Explicit => write!(f, "Explicit"),
-            PostRating::Questionnable => write!(f, "Questionable"),
+            PostRating::Questionable => write!(f, "Questionable"),
             PostRating::Safe => write!(f, "Safe"),
         }
     }
 }
 
 /// Post file formats/extensions.
+#[derive(Debug, PartialEq)]
 pub enum PostFormat {
     /// Joint Photographic Experts Group image file format.
     JPG,
@@ -65,6 +81,7 @@ impl fmt::Display for PostFormat {
 }
 
 /// Structure representing a post.
+#[derive(Debug, PartialEq)]
 pub struct Post {
     /// The raw JSON description of the post (from the API).
     pub raw: String,
@@ -134,6 +151,63 @@ pub struct Post {
     pub preview_width: Option<u64>,
     /// Height of the preview (thumbnail) image.
     pub preview_height: Option<u64>,
+}
+
+impl Post {
+    /// Returns `true` if this post is deleted. Equivalent to calling [`PostStatus::is_deleted()`]
+    /// on this post's [`status`].
+    ///
+    /// [`PostStatus::is_deleted()`]: enum.PostStatus.html#method.is_deleted
+    /// [`status`]: #structfield.status
+    pub fn is_deleted(&self) -> bool {
+        self.status.is_deleted()
+    }
+}
+
+impl Default for Post {
+    fn default() -> Post {
+        Post {
+            raw: Default::default(),
+
+            id: Default::default(),
+            md5: Default::default(),
+            status: Default::default(),
+
+            author: Default::default(),
+            creator_id: Default::default(),
+            created_at: Utc.timestamp(0, 0), // here is the bad boy
+
+            artists: Default::default(),
+            tags: Default::default(),
+            rating: Default::default(),
+            description: Default::default(),
+
+            parent_id: Default::default(),
+            children: Default::default(),
+            sources: Default::default(),
+
+            has_notes: Default::default(),
+            has_comments: Default::default(),
+
+            fav_count: Default::default(),
+            score: Default::default(),
+
+            file_url: Default::default(),
+            file_ext: Default::default(),
+            file_size: Default::default(),
+
+            width: Default::default(),
+            height: Default::default(),
+
+            sample_url: Default::default(),
+            sample_width: Default::default(),
+            sample_height: Default::default(),
+
+            preview_url: Default::default(),
+            preview_width: Default::default(),
+            preview_height: Default::default(),
+        }
+    }
 }
 
 impl fmt::Display for Post {
@@ -210,7 +284,7 @@ impl From<&serde_json::Value> for Post {
 
             rating: match v["rating"].as_str().unwrap() {
                 "e" => PostRating::Explicit,
-                "q" => PostRating::Questionnable,
+                "q" => PostRating::Questionable,
                 "s" => PostRating::Safe,
                 _ => unreachable!(),
             },
@@ -258,5 +332,78 @@ impl From<&serde_json::Value> for Post {
             preview_width: v["preview_width"].as_u64(),
             preview_height: v["preview_height"].as_u64(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_format_display() {
+        assert_eq!(
+            format!(
+                "{}, {}, {}, {} and {}",
+                PostFormat::JPG,
+                PostFormat::PNG,
+                PostFormat::GIF,
+                PostFormat::SWF,
+                PostFormat::WEBM,
+            ),
+            String::from("JPG, PNG, GIF, SWF and WEBM")
+        );
+    }
+
+    #[test]
+    fn post_rating_display() {
+        assert_eq!(
+            format!(
+                "{}, {} and {}",
+                PostRating::Safe,
+                PostRating::Questionable,
+                PostRating::Explicit
+            ),
+            String::from("Safe, Questionable and Explicit")
+        );
+    }
+
+    #[test]
+    fn post_rating_defaults_to_explicit() {
+        assert_eq!(PostRating::default(), PostRating::Explicit);
+    }
+
+    #[test]
+    fn post_status_defaults_to_pending() {
+        assert_eq!(PostStatus::default(), PostStatus::Pending);
+    }
+
+    #[test]
+    fn post_status_is_deleted() {
+        assert!(PostStatus::Deleted(String::from("foo")).is_deleted());
+    }
+
+    #[test]
+    fn post_status_is_not_deleted() {
+        assert!(!PostStatus::Active.is_deleted());
+    }
+
+    #[test]
+    fn post_is_deleted() {
+        let post = Post {
+            status: PostStatus::Deleted(String::from("foo")),
+            ..Default::default()
+        };
+
+        assert!(post.is_deleted());
+    }
+
+    #[test]
+    fn post_is_not_deleted() {
+        let post = Post {
+            status: PostStatus::Active,
+            ..Default::default()
+        };
+
+        assert!(!post.is_deleted());
     }
 }
