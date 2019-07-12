@@ -45,14 +45,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn client_new_requires_valid_user_agent() {
-        Client::new(b"\n").unwrap();
+        let result = std::panic::catch_unwind(|| Client::new(b"\n").unwrap());
+        assert!(result.is_err());
     }
 
     #[test]
-    #[should_panic]
     fn client_new_requires_non_empty_user_agent() {
-        Client::new(b"").unwrap();
+        let result = std::panic::catch_unwind(|| Client::new(b"").unwrap());
+        assert!(result.is_err());
     }
 }
