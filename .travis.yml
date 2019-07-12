@@ -1,6 +1,9 @@
 language: rust
 cache: cargo
 
+env:
+  - RUSTFLAGS='-C link-dead-code'
+
 addons:
   apt:
     packages:
