@@ -2,17 +2,29 @@ use std::fmt;
 
 use reqwest::header::InvalidHeaderValue;
 
-// Crate-wide Result type
+/// Result type for `rs621`, using [`rs621::error::Error`].
+///
+/// [`rs621::error::Error`]: enum.Error.html
 pub type Result<T> = ::std::result::Result<T, Error>;
 
-// Crate-wide Error type
+/// Enum for `rs621` errors.
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    /// The given value for the `limit` option is above the maximum value allowed in a context.
+    /// For instance, `order:score limit:350` is an invalid request because the maximum limit for
+    /// ordered queries is 320.
+    /// The first value is the value of the `limit` option. The second value is the biggest value
+    /// allowed in this context.
     AboveLimit(usize, usize),
+    /// An HTTP error has occurred. The `u16` value is the HTTP error code.
     Http(u16),
+    /// Serialization error. The `String` value is a description of the error.
     Serial(String),
+    /// Redirection error (e.g. redirection loop). The `String` value is a description of the error.
     Redirect(String),
+    /// The request couldn't be send. The `String` value is a description of the error.
     CannotSendRequest(String),
+    /// The client couldn't be created. The `String` value is a description of the error.
     CannotCreateClient(String),
 }
 

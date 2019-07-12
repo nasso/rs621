@@ -1,4 +1,4 @@
-use super::{Error, Result};
+use super::error::{Error, Result};
 
 use reqwest::{
     header::{self, HeaderMap, HeaderValue},

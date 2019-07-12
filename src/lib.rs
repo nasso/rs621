@@ -32,8 +32,6 @@
 //! you are responsible for making sure that you aren't exceeding the upper rate limit.** Waiting
 //! for functions performing requests in other threads to return should be enough.
 
-pub mod client;
+pub mod post;
 pub mod error;
-
-pub use client::Client;
-pub use error::{Error, Result};
+pub mod client;
