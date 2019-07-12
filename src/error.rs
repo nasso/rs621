@@ -33,12 +33,12 @@ impl fmt::Display for Error {
         match self {
             Error::AboveLimit(limit, max) => write!(
                 f,
-                "{} is above the max limit for ordered queries ({})",
+                "limit:{} is above the maximum value for ordered queries ({})",
                 limit, max
             ),
             Error::Http(code) => write!(f, "HTTP error: {}", code),
             Error::Serial(msg) => write!(f, "Serialization error: {}", msg),
-            Error::Redirect(msg) => write!(f, "Redirect error: {}", msg),
+            Error::Redirect(msg) => write!(f, "Redirection error: {}", msg),
             Error::CannotSendRequest(msg) => write!(f, "Couldn't send request: {}", msg),
             Error::CannotCreateClient(msg) => write!(f, "Couldn't create client: {}", msg),
         }
@@ -46,7 +46,60 @@ impl fmt::Display for Error {
 }
 
 impl From<InvalidHeaderValue> for Error {
-    fn from(_: InvalidHeaderValue) -> Error {
-        Error::CannotCreateClient(String::from("Invalid User-Agent value"))
+    fn from(e: InvalidHeaderValue) -> Error {
+        Error::CannotCreateClient(format!("Invalid header value: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_display_above_limit() {
+        assert_eq!(
+            format!("{}", Error::AboveLimit(400, 320)),
+            String::from("limit:400 is above the maximum value for ordered queries (320)")
+        );
+    }
+
+    #[test]
+    fn error_display_http() {
+        assert_eq!(
+            format!("{}", Error::Http(404)),
+            String::from("HTTP error: 404")
+        );
+    }
+
+    #[test]
+    fn error_display_serial() {
+        assert_eq!(
+            format!("{}", Error::Serial(String::from("foo"))),
+            String::from("Serialization error: foo")
+        );
+    }
+
+    #[test]
+    fn error_display_redirect() {
+        assert_eq!(
+            format!("{}", Error::Redirect(String::from("foo"))),
+            String::from("Redirection error: foo")
+        );
+    }
+
+    #[test]
+    fn error_display_cannot_send_request() {
+        assert_eq!(
+            format!("{}", Error::CannotSendRequest(String::from("foo"))),
+            String::from("Couldn't send request: foo")
+        );
+    }
+
+    #[test]
+    fn error_display_cannot_create_client() {
+        assert_eq!(
+            format!("{}", Error::CannotCreateClient(String::from("foo"))),
+            String::from("Couldn't create client: foo")
+        );
     }
 }

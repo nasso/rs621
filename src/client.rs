@@ -46,6 +46,12 @@ mod tests {
 
     #[test]
     #[should_panic]
+    fn client_new_requires_valid_user_agent() {
+        Client::new(b"\n").unwrap();
+    }
+
+    #[test]
+    #[should_panic]
     fn client_new_requires_non_empty_user_agent() {
         Client::new(b"").unwrap();
     }
