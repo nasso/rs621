@@ -1,6 +1,6 @@
 use std::fmt;
 
-use reqwest::header::InvalidHeaderValue;
+use reqwest_mock::header::InvalidHeaderValue;
 
 /// Result type for `rs621`, using [`rs621::error::Error`].
 ///
@@ -20,8 +20,6 @@ pub enum Error {
     Http(u16),
     /// Serialization error. The `String` value is a description of the error.
     Serial(String),
-    /// Redirection error (e.g. redirection loop). The `String` value is a description of the error.
-    Redirect(String),
     /// The request couldn't be send. The `String` value is a description of the error.
     CannotSendRequest(String),
     /// The client couldn't be created. The `String` value is a description of the error.
@@ -38,7 +36,6 @@ impl fmt::Display for Error {
             ),
             Error::Http(code) => write!(f, "HTTP error: {}", code),
             Error::Serial(msg) => write!(f, "Serialization error: {}", msg),
-            Error::Redirect(msg) => write!(f, "Redirection error: {}", msg),
             Error::CannotSendRequest(msg) => write!(f, "Couldn't send request: {}", msg),
             Error::CannotCreateClient(msg) => write!(f, "Couldn't create client: {}", msg),
         }
@@ -76,14 +73,6 @@ mod tests {
         assert_eq!(
             format!("{}", Error::Serial(String::from("foo"))),
             String::from("Serialization error: foo")
-        );
-    }
-
-    #[test]
-    fn error_display_redirect() {
-        assert_eq!(
-            format!("{}", Error::Redirect(String::from("foo"))),
-            String::from("Redirection error: foo")
         );
     }
 
