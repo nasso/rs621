@@ -1,5 +1,7 @@
 use chrono::{offset::Utc, DateTime, TimeZone};
 use serde_json;
+use serde_json::Value as JsonValue;
+use std::convert::TryFrom;
 use std::fmt;
 
 /// Post status.
@@ -22,6 +24,33 @@ impl PostStatus {
     }
 }
 
+impl TryFrom<(&str, Option<&str>)> for PostStatus {
+    type Error = ();
+
+    fn try_from(v: (&str, Option<&str>)) -> Result<PostStatus, ()> {
+        match v.0 {
+            "active" => Ok(PostStatus::Active),
+            "flagged" => Ok(PostStatus::Flagged),
+            "pending" => Ok(PostStatus::Pending),
+            "deleted" => Ok(PostStatus::Deleted(
+                v.1.map(String::from).unwrap_or_else(String::new),
+            )),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<(&JsonValue, Option<&str>)> for PostStatus {
+    type Error = ();
+
+    fn try_from(v: (&JsonValue, Option<&str>)) -> Result<PostStatus, ()> {
+        match v.0.as_str() {
+            Some(s) => PostStatus::try_from((s, v.1)),
+            None => Err(()),
+        }
+    }
+}
+
 impl Default for PostStatus {
     fn default() -> PostStatus {
         PostStatus::Pending
@@ -40,6 +69,30 @@ impl Default for PostRating {
     fn default() -> PostRating {
         // A default value doesn't make much sense here
         PostRating::Explicit
+    }
+}
+
+impl TryFrom<&str> for PostRating {
+    type Error = ();
+
+    fn try_from(v: &str) -> Result<PostRating, ()> {
+        match v {
+            "s" => Ok(PostRating::Safe),
+            "q" => Ok(PostRating::Questionable),
+            "e" => Ok(PostRating::Explicit),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<&JsonValue> for PostRating {
+    type Error = ();
+
+    fn try_from(v: &JsonValue) -> Result<PostRating, ()> {
+        match v.as_str() {
+            Some(s) => PostRating::try_from(s),
+            None => Err(()),
+        }
     }
 }
 
@@ -66,6 +119,32 @@ pub enum PostFormat {
     SWF,
     /// WebM video file format.
     WEBM,
+}
+
+impl TryFrom<&str> for PostFormat {
+    type Error = ();
+
+    fn try_from(v: &str) -> Result<PostFormat, ()> {
+        match v {
+            "jpg" => Ok(PostFormat::JPG),
+            "png" => Ok(PostFormat::PNG),
+            "gif" => Ok(PostFormat::GIF),
+            "swf" => Ok(PostFormat::SWF),
+            "webm" => Ok(PostFormat::WEBM),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<&JsonValue> for PostFormat {
+    type Error = ();
+
+    fn try_from(v: &JsonValue) -> Result<PostFormat, ()> {
+        match v.as_str() {
+            Some(s) => PostFormat::try_from(s),
+            None => Err(()),
+        }
+    }
 }
 
 impl fmt::Display for PostFormat {
@@ -244,52 +323,51 @@ impl fmt::Display for Post {
     }
 }
 
-impl From<&serde_json::Value> for Post {
-    fn from(v: &serde_json::Value) -> Self {
-        Post {
+fn get_json_value_as<'a, T, F>(v: &'a JsonValue, k: &str, p: F) -> Result<T, super::error::Error>
+where
+    F: FnOnce(&'a JsonValue) -> Option<T>,
+{
+    let value = &v[k];
+    p(&value).ok_or(super::error::Error::PostDeserialization(
+        k.to_string(),
+        v.to_string(),
+    ))
+}
+
+impl TryFrom<&JsonValue> for Post {
+    type Error = super::error::Error;
+
+    fn try_from(v: &JsonValue) -> super::error::Result<Self> {
+        Ok(Post {
             raw: v.to_string(),
 
-            id: v["id"].as_u64().unwrap(),
+            id: get_json_value_as(&v, "id", JsonValue::as_u64)?,
             md5: v["md5"].as_str().map(String::from),
-            status: match v["status"].as_str() {
-                Some("active") => PostStatus::Active,
-                Some("flagged") => PostStatus::Flagged,
-                Some("pending") => PostStatus::Pending,
-                Some("deleted") => {
-                    PostStatus::Deleted(v["delreason"].as_str().unwrap().to_string())
-                }
-                _ => unreachable!(),
-            },
+            status: get_json_value_as(&v, "status", |v| {
+                // we need to give a tuple to try_from to give it the delreason if there's any
+                PostStatus::try_from((v, v["delreason"].as_str())).ok()
+            })?,
 
-            author: v["author"].as_str().unwrap().to_string(),
+            author: get_json_value_as(&v, "author", JsonValue::as_str)?.to_string(),
             creator_id: v["creator_id"].as_u64(),
             created_at: Utc.timestamp(
-                v["created_at"]["s"].as_i64().unwrap(),
-                v["created_at"]["n"].as_u64().unwrap() as u32,
+                get_json_value_as(&v["created_at"], "s", JsonValue::as_i64)?,
+                get_json_value_as(&v["created_at"], "n", JsonValue::as_u64)? as u32,
             ),
 
-            artists: v["artist"]
-                .as_array()
-                .unwrap()
+            artists: get_json_value_as(&v, "artist", JsonValue::as_array)?
                 .iter()
                 .map(|v| v.as_str().unwrap().to_string())
                 .collect(),
 
-            tags: v["tags"]
-                .as_str()
-                .unwrap()
+            tags: get_json_value_as(&v, "tags", JsonValue::as_str)?
                 .split_whitespace()
                 .map(String::from)
                 .collect(),
 
-            rating: match v["rating"].as_str().unwrap() {
-                "e" => PostRating::Explicit,
-                "q" => PostRating::Questionable,
-                "s" => PostRating::Safe,
-                _ => unreachable!(),
-            },
+            rating: get_json_value_as(&v, "rating", |v| PostRating::try_from(v).ok())?,
 
-            description: v["description"].as_str().unwrap().to_string(),
+            description: get_json_value_as(&v, "description", JsonValue::as_str)?.to_string(),
 
             parent_id: v["parent_id"].as_u64(),
             children: v["children"].as_str().map_or_else(Vec::new, |c| {
@@ -304,28 +382,24 @@ impl From<&serde_json::Value> for Post {
                 v.iter().map(|v| v.as_str().unwrap().to_string()).collect()
             }),
 
-            has_notes: v["has_notes"].as_bool().unwrap(),
-            has_comments: v["has_comments"].as_bool().unwrap(),
+            has_notes: get_json_value_as(&v, "has_notes", JsonValue::as_bool)?,
+            has_comments: get_json_value_as(&v, "has_comments", JsonValue::as_bool)?,
 
-            fav_count: v["fav_count"].as_u64().unwrap(),
-            score: v["score"].as_i64().unwrap(),
+            fav_count: get_json_value_as(&v, "fav_count", JsonValue::as_u64)?,
+            score: get_json_value_as(&v, "score", JsonValue::as_i64)?,
 
             file_url: match v["status"].as_str() {
                 Some("deleted") => None,
-                _ => Some(v["file_url"].as_str().unwrap().to_string()),
+                _ => Some(get_json_value_as(&v, "file_url", JsonValue::as_str)?.to_string()),
             },
-            file_ext: v["file_ext"].as_str().map(|v| match v {
-                "jpg" => PostFormat::JPG,
-                "png" => PostFormat::PNG,
-                "gif" => PostFormat::GIF,
-                "swf" => PostFormat::SWF,
-                "webm" => PostFormat::WEBM,
-                _ => unreachable!(),
-            }),
+            file_ext: v["file_ext"]
+                .as_str()
+                .map(PostFormat::try_from)
+                .map(Result::unwrap),
             file_size: v["file_size"].as_u64(),
 
-            width: v["width"].as_u64().unwrap(),
-            height: v["height"].as_u64().unwrap(),
+            width: get_json_value_as(&v, "width", JsonValue::as_u64)?,
+            height: get_json_value_as(&v, "height", JsonValue::as_u64)?,
 
             sample_url: v["sample_url"].as_str().map(String::from),
             sample_width: v["sample_width"].as_u64(),
@@ -333,11 +407,11 @@ impl From<&serde_json::Value> for Post {
 
             preview_url: match v["status"].as_str() {
                 Some("deleted") => None,
-                _ => Some(v["preview_url"].as_str().unwrap().to_string()),
+                _ => Some(get_json_value_as(&v, "preview_url", JsonValue::as_str)?.to_string()),
             },
             preview_width: v["preview_width"].as_u64(),
             preview_height: v["preview_height"].as_u64(),
-        }
+        })
     }
 }
 
@@ -346,11 +420,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn post_from_json() {
-        // that's the example JSON output from the official API for the /post/show.json endpoint
+    fn post_from_json_basic() {
+        // that's the example JSON output from the official API for the /post/show.json endpoint.
+        // it has been modified a bit because it's very big (e.g. i removed a bunch of tags and
+        // URLs).
         let example_json = r#"{
           "id": 8595,
-          "tags": "2005 alley anthro ball bottomwear brown_fur canid canine canis child clothed clothing colored_pencil_(artwork) commentary cub domestic_cat domestic_dog duo english_text felid feline felis female fur ghetto grass happy jessica_willard male mammal mixed_media multicolored_fur outside pants pen_(artwork) playing politics racism shirt sign skirt smile text topwear traditional_media_(artwork) white_fur young",
+          "tags": "2005 alley anthro ball bottomwear brown_fur canid canine canis child clothed",
           "locked_tags": null,
           "description": "",
           "created_at": {
@@ -366,12 +442,12 @@ mod tests {
           "fav_count": 159,
           "md5": "e9fbd2f2d0703a9775f245d55b9a0f9f",
           "file_size": 135618,
-          "file_url": "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg",
+          "file_url": "some file url",
           "file_ext": "jpg",
-          "preview_url": "https://static1.e621.net/data/preview/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg",
+          "preview_url": "some preview url",
           "preview_width": 150,
           "preview_height": 115,
-          "sample_url": "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg",
+          "sample_url": "some sample url",
           "sample_width": 800,
           "sample_height": 616,
           "rating": "s",
@@ -393,8 +469,8 @@ mod tests {
           ]
         }"#;
 
-        let parsed = serde_json::from_str::<serde_json::Value>(example_json).unwrap();
-        let post = Post::from(&parsed);
+        let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
+        let post = Post::try_from(&parsed).unwrap();
 
         assert_eq!(post.raw, parsed.to_string());
 
@@ -424,42 +500,6 @@ mod tests {
                 String::from("canis"),
                 String::from("child"),
                 String::from("clothed"),
-                String::from("clothing"),
-                String::from("colored_pencil_(artwork)"),
-                String::from("commentary"),
-                String::from("cub"),
-                String::from("domestic_cat"),
-                String::from("domestic_dog"),
-                String::from("duo"),
-                String::from("english_text"),
-                String::from("felid"),
-                String::from("feline"),
-                String::from("felis"),
-                String::from("female"),
-                String::from("fur"),
-                String::from("ghetto"),
-                String::from("grass"),
-                String::from("happy"),
-                String::from("jessica_willard"),
-                String::from("male"),
-                String::from("mammal"),
-                String::from("mixed_media"),
-                String::from("multicolored_fur"),
-                String::from("outside"),
-                String::from("pants"),
-                String::from("pen_(artwork)"),
-                String::from("playing"),
-                String::from("politics"),
-                String::from("racism"),
-                String::from("shirt"),
-                String::from("sign"),
-                String::from("skirt"),
-                String::from("smile"),
-                String::from("text"),
-                String::from("topwear"),
-                String::from("traditional_media_(artwork)"),
-                String::from("white_fur"),
-                String::from("young"),
             ]
         );
         assert_eq!(post.rating, PostRating::Safe);
@@ -482,33 +522,18 @@ mod tests {
         assert_eq!(post.fav_count, 159);
         assert_eq!(post.score, 76);
 
-        assert_eq!(
-            post.file_url,
-            Some(String::from(
-                "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
-            ))
-        );
+        assert_eq!(post.file_url, Some(String::from("some file url")));
         assert_eq!(post.file_ext, Some(PostFormat::JPG));
         assert_eq!(post.file_size, Some(135618));
 
         assert_eq!(post.width, 800);
         assert_eq!(post.height, 616);
 
-        assert_eq!(
-            post.sample_url,
-            Some(String::from(
-                "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
-            ))
-        );
+        assert_eq!(post.sample_url, Some(String::from("some sample url")));
         assert_eq!(post.sample_width, Some(800));
         assert_eq!(post.sample_height, Some(616));
 
-        assert_eq!(
-            post.preview_url,
-            Some(String::from(
-                "https://static1.e621.net/data/preview/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
-            ))
-        );
+        assert_eq!(post.preview_url, Some(String::from("some preview url")));
 
         assert_eq!(post.preview_width, Some(150));
         assert_eq!(post.preview_height, Some(115));
@@ -563,41 +588,19 @@ mod tests {
     }
 
     #[test]
-    fn post_format_display() {
-        assert_eq!(
-            format!(
-                "{}, {}, {}, {} and {}",
-                PostFormat::JPG,
-                PostFormat::PNG,
-                PostFormat::GIF,
-                PostFormat::SWF,
-                PostFormat::WEBM,
-            ),
-            String::from("JPG, PNG, GIF, SWF and WEBM")
-        );
+    fn post_format_to_string() {
+        assert_eq!(PostFormat::JPG.to_string(), "JPG");
+        assert_eq!(PostFormat::PNG.to_string(), "PNG");
+        assert_eq!(PostFormat::GIF.to_string(), "GIF");
+        assert_eq!(PostFormat::SWF.to_string(), "SWF");
+        assert_eq!(PostFormat::WEBM.to_string(), "WEBM");
     }
 
     #[test]
-    fn post_rating_display() {
-        assert_eq!(
-            format!(
-                "{}, {} and {}",
-                PostRating::Safe,
-                PostRating::Questionable,
-                PostRating::Explicit
-            ),
-            String::from("Safe, Questionable and Explicit")
-        );
-    }
-
-    #[test]
-    fn post_rating_defaults_to_explicit() {
-        assert_eq!(PostRating::default(), PostRating::Explicit);
-    }
-
-    #[test]
-    fn post_status_defaults_to_pending() {
-        assert_eq!(PostStatus::default(), PostStatus::Pending);
+    fn post_rating_to_string() {
+        assert_eq!(PostRating::Safe.to_string(), "safe");
+        assert_eq!(PostRating::Questionable.to_string(), "questionable");
+        assert_eq!(PostRating::Explicit.to_string(), "explicit");
     }
 
     #[test]
