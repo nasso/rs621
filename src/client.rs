@@ -5,6 +5,9 @@ use std::convert::TryFrom;
 
 use reqwest_mock::header::{self, HeaderMap, HeaderValue};
 
+/// Maximum value allowed by the API for the `limit` option.
+static LIST_HARD_LIMIT: usize = 320;
+
 /// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
 /// so the lowest safe value we can have here is 500 ms.
 const REQ_COOLDOWN_DURATION: ::std::time::Duration = ::std::time::Duration::from_millis(600);
@@ -76,6 +79,82 @@ impl<C: reqwest_mock::Client> Client<C> {
 
         Post::try_from(&body)
     }
+
+    /// Performs a search on E621 with the given tags and returns at most `limit` results.
+    ///
+    /// The E621 API has a hard limit of 320 results per request. `rs621` can go beyond that limit
+    /// and automatically performs more requests until enough posts are gathered (except for ordered
+    /// queries, i.e. containing an `order:*` tag). The requests are performed sequentially and the
+    /// function will therefore take a longer time to return.
+    ///
+    /// This function can perform more than one request; it will perform a short sleep before every
+    /// request to ensure that the API rate limit isn't exceeded.
+    pub fn list(&self, q: &[&str], limit: usize) -> Result<Vec<Post>> {
+        let query_str = q.join(" ");
+        let query_str_url = urlencoding::encode(&query_str);
+        let ordered = q.iter().any(|t| t.starts_with("order:"));
+
+        let mut posts = Vec::new();
+
+        if ordered {
+            if limit > LIST_HARD_LIMIT {
+                return Err(Error::AboveLimit(limit, LIST_HARD_LIMIT));
+            }
+
+            let body = self.get_json(&format!(
+                "https://e621.net/post/index.json?limit={}&tags={}",
+                limit, query_str_url
+            ))?;
+
+            for p in body.as_array().unwrap().iter() {
+                match Post::try_from(p) {
+                    Ok(post) => posts.push(post),
+                    _ => (),
+                }
+            }
+        } else {
+            let mut lowest_id = None;
+
+            while posts.len() < limit {
+                let left = limit - posts.len();
+                let batch = left.min(LIST_HARD_LIMIT);
+
+                let body = self.get_json(&format!(
+                    "https://e621.net/post/index.json?limit={}&tags={}{}",
+                    batch,
+                    query_str_url,
+                    if let Some(i) = lowest_id {
+                        format!("&before_id={}", i)
+                    } else {
+                        "".to_string()
+                    }
+                ))?;
+
+                let post_array = body.as_array().unwrap();
+
+                if post_array.is_empty() {
+                    break;
+                }
+
+                for p in post_array.iter() {
+                    match Post::try_from(p) {
+                        Ok(post) => {
+                            if let Some(i) = lowest_id {
+                                lowest_id = Some(post.id.min(i));
+                            } else {
+                                lowest_id = Some(post.id);
+                            }
+
+                            posts.push(post);
+                        }
+                        _ => (),
+                    }
+                }
+            }
+        }
+
+        Ok(posts)
+    }
 }
 
 impl Client<reqwest_mock::DirectClient> {
@@ -100,6 +179,40 @@ mod tests {
     use serde_json::Value as JsonValue;
 
     #[test]
+    fn list_post() {
+        let mut client = Client {
+            headers: create_header_map(b"rs621/unit_test").unwrap(),
+            client: StubClient::new(StubSettings {
+                default: StubDefault::Error,
+                strictness: StubStrictness::MethodUrl,
+            }),
+        };
+
+        let response = include_str!("mocked/index_fluffy_rating-s_limit-5.json");
+        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
+        let expected: Vec<Post> = response_json
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| Post::try_from(v).unwrap())
+            .collect();
+
+        assert!(client
+            .client
+            .stub(
+                Url::parse("https://e621.net/post/index.json?limit=5&tags=fluffy%20rating%3As")
+                    .unwrap()
+            )
+            .method(Method::GET)
+            .response()
+            .body(response)
+            .mock()
+            .is_ok());
+
+        assert_eq!(client.list(&["fluffy", "rating:s"], 5), Ok(expected));
+    }
+
+    #[test]
     fn get_post_by_id() {
         let mut client = Client {
             headers: create_header_map(b"rs621/unit_test").unwrap(),
@@ -109,20 +222,20 @@ mod tests {
             }),
         };
 
-        let post_data = include_str!("mocked/show_id_8595.json");
-        let post_data_json = serde_json::from_str::<JsonValue>(post_data).unwrap();
-        let expected_post = Post::try_from(&post_data_json).unwrap();
+        let response = include_str!("mocked/show_id_8595.json");
+        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
+        let expected = Post::try_from(&response_json).unwrap();
 
         assert!(client
             .client
             .stub(Url::parse("https://e621.net/post/show.json?id=8595").unwrap())
             .method(Method::GET)
             .response()
-            .body(post_data)
+            .body(response)
             .mock()
             .is_ok());
 
-        assert_eq!(client.get_post(8595), Ok(expected_post));
+        assert_eq!(client.get_post(8595), Ok(expected));
     }
 
     #[test]
