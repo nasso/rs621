@@ -32,6 +32,11 @@
 //! you are responsible for making sure that you aren't exceeding the upper rate limit.** Waiting
 //! for functions performing requests in other threads to return should be enough.
 
+/// Client related structures.
 pub mod client;
+
+/// Error management.
 pub mod error;
+
+/// Posts management.
 pub mod post;
