@@ -516,53 +516,7 @@ mod tests {
 
     #[test]
     fn post_from_json_basic() {
-        // that's the example JSON output from the official API for the /post/show.json endpoint.
-        // it has been modified a bit because it's very big (e.g. i removed a bunch of tags and
-        // URLs).
-        let example_json = r#"{
-          "id": 8595,
-          "tags": "2005 alley anthro ball bottomwear brown_fur canid canine canis child clothed",
-          "locked_tags": null,
-          "description": "",
-          "created_at": {
-            "json_class": "Time",
-            "s": 1182709502,
-            "n": 993870000
-          },
-          "creator_id": 46,
-          "author": "Anomynous",
-          "change": 18928032,
-          "source": "Jessica Willard, \"jw-babysteps.jpg\"",
-          "score": 76,
-          "fav_count": 159,
-          "md5": "e9fbd2f2d0703a9775f245d55b9a0f9f",
-          "file_size": 135618,
-          "file_url": "some file url",
-          "file_ext": "jpg",
-          "preview_url": "some preview url",
-          "preview_width": 150,
-          "preview_height": 115,
-          "sample_url": "some sample url",
-          "sample_width": 800,
-          "sample_height": 616,
-          "rating": "s",
-          "status": "active",
-          "width": 800,
-          "height": 616,
-          "has_comments": true,
-          "has_notes": false,
-          "has_children": true,
-          "children": "128898",
-          "parent_id": null,
-          "artist": [
-            "jessica_willard"
-          ],
-          "sources": [
-            "Jessica Willard, \"jw-babysteps.jpg\"",
-            "http://us-p.vclart.net/vcl/Artists/J-Willard/jw-babysteps.jpg",
-            "http://www.furaffinity.net/view/185399/"
-          ]
-        }"#;
+        let example_json = include_str!("mocked/show_id_8595.json");
 
         let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
         let post = Post::try_from(&parsed).unwrap();
@@ -595,6 +549,42 @@ mod tests {
                 String::from("canis"),
                 String::from("child"),
                 String::from("clothed"),
+                String::from("clothing"),
+                String::from("colored_pencil_(artwork)"),
+                String::from("commentary"),
+                String::from("cub"),
+                String::from("domestic_cat"),
+                String::from("domestic_dog"),
+                String::from("duo"),
+                String::from("english_text"),
+                String::from("felid"),
+                String::from("feline"),
+                String::from("felis"),
+                String::from("female"),
+                String::from("fur"),
+                String::from("ghetto"),
+                String::from("grass"),
+                String::from("happy"),
+                String::from("jessica_willard"),
+                String::from("male"),
+                String::from("mammal"),
+                String::from("mixed_media"),
+                String::from("multicolored_fur"),
+                String::from("outside"),
+                String::from("pants"),
+                String::from("pen_(artwork)"),
+                String::from("playing"),
+                String::from("politics"),
+                String::from("racism"),
+                String::from("shirt"),
+                String::from("sign"),
+                String::from("skirt"),
+                String::from("smile"),
+                String::from("text"),
+                String::from("topwear"),
+                String::from("traditional_media_(artwork)"),
+                String::from("white_fur"),
+                String::from("young"),
             ]
         );
         assert_eq!(post.rating, PostRating::Safe);
@@ -617,18 +607,33 @@ mod tests {
         assert_eq!(post.fav_count, 159);
         assert_eq!(post.score, 76);
 
-        assert_eq!(post.file_url, Some(String::from("some file url")));
+        assert_eq!(
+            post.file_url,
+            Some(String::from(
+                "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
+            ))
+        );
         assert_eq!(post.file_ext, Some(PostFormat::JPG));
         assert_eq!(post.file_size, Some(135618));
 
         assert_eq!(post.width, 800);
         assert_eq!(post.height, 616);
 
-        assert_eq!(post.sample_url, Some(String::from("some sample url")));
+        assert_eq!(
+            post.sample_url,
+            Some(String::from(
+                "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
+            ))
+        );
         assert_eq!(post.sample_width, Some(800));
         assert_eq!(post.sample_height, Some(616));
 
-        assert_eq!(post.preview_url, Some(String::from("some preview url")));
+        assert_eq!(
+            post.preview_url,
+            Some(String::from(
+                "https://static1.e621.net/data/preview/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
+            ))
+        );
 
         assert_eq!(post.preview_width, Some(150));
         assert_eq!(post.preview_height, Some(115));
