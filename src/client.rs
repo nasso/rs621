@@ -1,4 +1,7 @@
 use super::error::{Error, Result};
+use super::post::Post;
+
+use std::convert::TryFrom;
 
 use reqwest_mock::header::{self, HeaderMap, HeaderValue};
 
@@ -52,6 +55,27 @@ impl<C: reqwest_mock::Client> Client<C> {
             Err(e) => Err(Error::CannotSendRequest(format!("{}", e))),
         }
     }
+
+    /// Returns the post with the given ID.
+    ///
+    /// ```no_run
+    /// # use rs621::client::Client;
+    /// # use rs621::post::Post;
+    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// let post = client.get_post(8595)?;
+    ///
+    /// assert_eq!(post.id, 8595);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// This function performs a request; it will perform a short sleep to ensure that the API rate
+    /// limit isn't exceeded.
+    pub fn get_post(&self, id: u64) -> Result<Post> {
+        let body = self.get_json(&format!("https://e621.net/post/show.json?id={}", id))?;
+
+        Post::try_from(&body)
+    }
 }
 
 impl Client<reqwest_mock::DirectClient> {
@@ -69,7 +93,63 @@ impl Client<reqwest_mock::DirectClient> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest_mock::{Method, StubClient, StubDefault, StubSettings, StubStrictness, Url};
+    use reqwest_mock::{
+        Method, StatusCode, StubClient, StubDefault, StubSettings, StubStrictness, Url,
+    };
+
+    use serde_json::Value as JsonValue;
+
+    #[test]
+    fn get_post_by_id() {
+        let mut client = Client {
+            headers: create_header_map(b"rs621/unit_test").unwrap(),
+            client: StubClient::new(StubSettings {
+                default: StubDefault::Error,
+                strictness: StubStrictness::MethodUrl,
+            }),
+        };
+
+        let post_data = include_str!("mocked/show_id_8595.json");
+        let post_data_json = serde_json::from_str::<JsonValue>(post_data).unwrap();
+        let expected_post = Post::try_from(&post_data_json).unwrap();
+
+        assert!(client
+            .client
+            .stub(Url::parse("https://e621.net/post/show.json?id=8595").unwrap())
+            .method(Method::GET)
+            .response()
+            .body(post_data)
+            .mock()
+            .is_ok());
+
+        assert_eq!(client.get_post(8595), Ok(expected_post));
+    }
+
+    #[test]
+    fn get_json_http_error() {
+        let mut client = Client {
+            headers: create_header_map(b"rs621/unit_test").unwrap(),
+            client: StubClient::new(StubSettings {
+                default: StubDefault::Error,
+                strictness: StubStrictness::MethodUrl,
+            }),
+        };
+
+        assert!(client
+            .client
+            .stub(Url::parse("https://e621.net/post/show.json?id=8595").unwrap())
+            .method(Method::GET)
+            .response()
+            .status_code(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("")
+            .mock()
+            .is_ok());
+
+        assert_eq!(
+            client.get_json("https://e621.net/post/show.json?id=8595"),
+            Err(crate::error::Error::Http(500))
+        );
+    }
 
     #[test]
     fn get_json_works() {
