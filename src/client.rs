@@ -82,14 +82,40 @@ impl<C: reqwest_mock::Client> Client<C> {
 
     /// Performs a search on E621 with the given tags and returns at most `limit` results.
     ///
+    /// ```no_run
+    /// # use rs621::client::Client;
+    /// # use rs621::post::Post;
+    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// let posts = client.list(&["fluffy", "rating:s"], 5)?;
+    ///
+    /// assert_eq!(posts.len(), 5);
+    /// # Ok(()) }
+    /// ```
+    ///
     /// The E621 API has a hard limit of 320 results per request. `rs621` can go beyond that limit
     /// and automatically performs more requests until enough posts are gathered (except for ordered
     /// queries, i.e. containing an `order:*` tag). The requests are performed sequentially and the
     /// function will therefore take a longer time to return.
     ///
+    /// ```no_run
+    /// # use rs621::client::Client;
+    /// # use rs621::post::Post;
+    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// let posts = client.list(&["fluffy", "rating:s"], 400)?;
+    ///
+    /// assert_eq!(posts.len(), 400);
+    /// # Ok(()) }
+    /// ```
+    ///
     /// This function can perform more than one request; it will perform a short sleep before every
     /// request to ensure that the API rate limit isn't exceeded.
-    pub fn list(&self, q: &[&str], limit: usize) -> Result<Vec<Post>> {
+    pub fn list<'a, T>(&self, q: T, limit: usize) -> Result<Vec<Post>>
+    where
+        T: AsRef<[&'a str]>,
+    {
+        let q = q.as_ref();
         let query_str = q.join(" ");
         let query_str_url = urlencoding::encode(&query_str);
         let ordered = q.iter().any(|t| t.starts_with("order:"));
