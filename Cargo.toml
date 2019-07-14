@@ -9,4 +9,4 @@ edition = "2018"
 [dependencies]
 chrono = "0.4.7"
 serde_json = "1.0.40"
-reqwest_mock = { path = "reqwest_mock" }
+reqwest_mock = { git = "https://github.com/nasso/reqwest_mock" }
