@@ -179,6 +179,93 @@ mod tests {
     use serde_json::Value as JsonValue;
 
     #[test]
+    fn list_post_multiple_pages() {
+        let mut client = Client {
+            headers: create_header_map(b"rs621/unit_test").unwrap(),
+            client: StubClient::new(StubSettings {
+                default: StubDefault::Error,
+                strictness: StubStrictness::MethodUrl,
+            }),
+        };
+
+        let first_expected_response = include_str!("mocked/index_fluffy_rating-s_limit-320.json");
+        let second_expected_response =
+            include_str!("mocked/index_fluffy_rating-s_limit-80_before-id-1866033.json");
+
+        let first_request =
+            Url::parse("https://e621.net/post/index.json?limit=320&tags=fluffy%20rating%3As")
+                .unwrap();
+
+        let second_request = Url::parse(
+            "https://e621.net/post/index.json?limit=80&tags=fluffy%20rating%3As&before_id=1866033",
+        )
+        .unwrap();
+
+        let expected: Vec<Post> = serde_json::from_str::<JsonValue>(first_expected_response)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(
+                serde_json::from_str::<JsonValue>(second_expected_response)
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .iter(),
+            )
+            .map(|v| Post::try_from(v).unwrap())
+            .collect();
+
+        assert!(client
+            .client
+            .stub(first_request)
+            .method(Method::GET)
+            .response()
+            .body(first_expected_response)
+            .mock()
+            .is_ok());
+
+        assert!(client
+            .client
+            .stub(second_request)
+            .method(Method::GET)
+            .response()
+            .body(second_expected_response)
+            .mock()
+            .is_ok());
+
+        assert_eq!(client.list(&["fluffy", "rating:s"], 400), Ok(expected));
+    }
+
+    #[test]
+    fn list_post_no_result() {
+        let mut client = Client {
+            headers: create_header_map(b"rs621/unit_test").unwrap(),
+            client: StubClient::new(StubSettings {
+                default: StubDefault::Error,
+                strictness: StubStrictness::MethodUrl,
+            }),
+        };
+
+        let response = "[]";
+        let expected = Vec::new();
+
+        assert!(client
+            .client
+            .stub(
+                Url::parse("https://e621.net/post/index.json?limit=5&tags=fluffy%20rating%3As")
+                    .unwrap()
+            )
+            .method(Method::GET)
+            .response()
+            .body(response)
+            .mock()
+            .is_ok());
+
+        assert_eq!(client.list(&["fluffy", "rating:s"], 5), Ok(expected));
+    }
+
+    #[test]
     fn list_post() {
         let mut client = Client {
             headers: create_header_map(b"rs621/unit_test").unwrap(),
