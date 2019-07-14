@@ -99,9 +99,9 @@ impl TryFrom<&JsonValue> for PostRating {
 impl fmt::Display for PostRating {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            PostRating::Explicit => write!(f, "Explicit"),
-            PostRating::Questionable => write!(f, "Questionable"),
-            PostRating::Safe => write!(f, "Safe"),
+            PostRating::Explicit => write!(f, "explicit"),
+            PostRating::Questionable => write!(f, "questionable"),
+            PostRating::Safe => write!(f, "safe"),
         }
     }
 }
@@ -418,6 +418,101 @@ impl TryFrom<&JsonValue> for Post {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn post_format_from_json() {
+        assert_eq!(
+            PostFormat::try_from(&JsonValue::String(String::from("jpg"))),
+            Ok(PostFormat::JPG)
+        );
+
+        assert_eq!(
+            PostFormat::try_from(&JsonValue::String(String::from("png"))),
+            Ok(PostFormat::PNG)
+        );
+
+        assert_eq!(
+            PostFormat::try_from(&JsonValue::String(String::from("gif"))),
+            Ok(PostFormat::GIF)
+        );
+
+        assert_eq!(
+            PostFormat::try_from(&JsonValue::String(String::from("swf"))),
+            Ok(PostFormat::SWF)
+        );
+
+        assert_eq!(
+            PostFormat::try_from(&JsonValue::String(String::from("webm"))),
+            Ok(PostFormat::WEBM)
+        );
+
+        assert_eq!(
+            PostFormat::try_from(&JsonValue::String(String::from("owo"))),
+            Err(())
+        );
+
+        assert_eq!(PostFormat::try_from(&JsonValue::Null), Err(()));
+    }
+
+    #[test]
+    fn post_rating_from_json() {
+        assert_eq!(
+            PostRating::try_from(&JsonValue::String(String::from("s"))),
+            Ok(PostRating::Safe)
+        );
+
+        assert_eq!(
+            PostRating::try_from(&JsonValue::String(String::from("q"))),
+            Ok(PostRating::Questionable)
+        );
+
+        assert_eq!(
+            PostRating::try_from(&JsonValue::String(String::from("e"))),
+            Ok(PostRating::Explicit)
+        );
+
+        assert_eq!(
+            PostRating::try_from(&JsonValue::String(String::from("?"))),
+            Err(())
+        );
+
+        assert_eq!(PostRating::try_from(&JsonValue::Null), Err(()));
+    }
+
+    #[test]
+    fn post_status_from_json() {
+        assert_eq!(
+            PostStatus::try_from((&JsonValue::String(String::from("active")), None)),
+            Ok(PostStatus::Active)
+        );
+
+        assert_eq!(
+            PostStatus::try_from((&JsonValue::String(String::from("flagged")), None)),
+            Ok(PostStatus::Flagged)
+        );
+
+        assert_eq!(
+            PostStatus::try_from((&JsonValue::String(String::from("pending")), None)),
+            Ok(PostStatus::Pending)
+        );
+
+        assert_eq!(
+            PostStatus::try_from((&JsonValue::String(String::from("deleted")), None)),
+            Ok(PostStatus::Deleted(String::from("")))
+        );
+
+        assert_eq!(
+            PostStatus::try_from((&JsonValue::String(String::from("deleted")), Some("foo"))),
+            Ok(PostStatus::Deleted(String::from("foo")))
+        );
+
+        assert_eq!(
+            PostStatus::try_from((&JsonValue::String(String::from("invalid")), None)),
+            Err(())
+        );
+
+        assert_eq!(PostStatus::try_from((&JsonValue::Null, None)), Err(()));
+    }
 
     #[test]
     fn post_from_json_basic() {
