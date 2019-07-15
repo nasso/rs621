@@ -10,12 +10,13 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 /// Enum for `rs621` errors.
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    /// The given value for the `limit` option is above the maximum value allowed in a context.
-    /// For instance, `order:score limit:350` is an invalid request because the maximum limit for
-    /// ordered queries is 320.
-    /// The first value is the value of the `limit` option. The second value is the biggest value
-    /// allowed in this context.
-    AboveLimit(usize, usize),
+    /// The given value for the some option is above the maximum value allowed in its context.
+    /// E.g.: `order:score limit:350` is an invalid request because the maximum limit for ordered
+    /// queries is 320.
+    ///
+    /// The first value is the name of the option, the second is the value that was given to it and
+    /// the third is the biggest value allowed.
+    AboveLimit(String, u64, u64),
     /// An HTTP error has occurred. The `u16` value is the HTTP error code.
     Http(u16),
     /// Serialization error. Contains a description of the error.
@@ -32,10 +33,10 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::AboveLimit(limit, max) => write!(
+            Error::AboveLimit(option, value, max) => write!(
                 f,
-                "limit:{} is above the maximum value for ordered queries ({})",
-                limit, max
+                "{}:{} is above the maximum value allowed in this context ({})",
+                option, value, max
             ),
             Error::Http(code) => write!(f, "HTTP error: {}", code),
             Error::Serial(msg) => write!(f, "Serialization error: {}", msg),
