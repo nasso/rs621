@@ -11,8 +11,8 @@ categories = ["api-bindings"]
 license = "MIT OR Apache-2.0"
 
 [badges]
-travis-ci = { repository = "https://github.com/nasso/rs621" }
-codecov = { repository = "https://github.com/nasso/rs621" }
+travis-ci = { repository = "nasso/rs621" }
+codecov = { repository = "nasso/rs621" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
