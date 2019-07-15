@@ -3,6 +3,16 @@ name = "rs621"
 version = "0.1.0"
 authors = ["nasso <nassomails@gmail.com>"]
 edition = "2018"
+description = "Rust crate for the E621 API (a large online archive of furry art)."
+repository = "https://github.com/nasso/rs621"
+readme = "README.md"
+keywords = ["e621", "e926", "furry", "api", "client"]
+categories = ["api-bindings"]
+license = "MIT OR Apache-2.0"
+
+[badges]
+travis-ci = { repository = "https://github.com/nasso/rs621" }
+codecov = { repository = "https://github.com/nasso/rs621" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
