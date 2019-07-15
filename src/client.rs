@@ -87,7 +87,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # use rs621::post::Post;
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let posts = client.list(&["fluffy", "rating:s"], 5)?;
+    /// let posts = client.search(&["fluffy", "rating:s"], 5)?;
     ///
     /// assert_eq!(posts.len(), 5);
     /// # Ok(()) }
@@ -103,7 +103,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # use rs621::post::Post;
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let posts = client.list(&["fluffy", "rating:s"], 400)?;
+    /// let posts = client.search(&["fluffy", "rating:s"], 400)?;
     ///
     /// assert_eq!(posts.len(), 400);
     /// # Ok(()) }
@@ -111,7 +111,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// This function can perform more than one request; it will perform a short sleep before every
     /// request to ensure that the API rate limit isn't exceeded.
-    pub fn list<'a, T>(&self, q: T, limit: usize) -> Result<Vec<Post>>
+    pub fn search<'a, T>(&self, q: T, limit: usize) -> Result<Vec<Post>>
     where
         T: AsRef<[&'a str]>,
     {
@@ -260,7 +260,7 @@ mod tests {
             .mock()
             .is_ok());
 
-        assert_eq!(client.list(&["fluffy", "rating:s"], 400), Ok(expected));
+        assert_eq!(client.search(&["fluffy", "rating:s"], 400), Ok(expected));
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
             .mock()
             .is_ok());
 
-        assert_eq!(client.list(&["fluffy", "rating:s"], 5), Ok(expected));
+        assert_eq!(client.search(&["fluffy", "rating:s"], 5), Ok(expected));
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod tests {
             .mock()
             .is_ok());
 
-        assert_eq!(client.list(&["fluffy", "rating:s"], 5), Ok(expected));
+        assert_eq!(client.search(&["fluffy", "rating:s"], 5), Ok(expected));
     }
 
     #[test]
