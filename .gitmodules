@@ -1,3 +1,0 @@
-[submodule "reqwest_mock"]
-	path = reqwest_mock
-	url = https://github.com/nasso/reqwest_mock
