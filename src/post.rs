@@ -57,11 +57,14 @@ impl Default for PostStatus {
     }
 }
 
-/// Post's rating.
+/// Post rating.
 #[derive(Debug, PartialEq)]
 pub enum PostRating {
+    /// Safe For Work
     Safe,
+    /// Wouldn't Recommend For Work
     Questionable,
+    /// Not Safe For Work
     Explicit,
 }
 

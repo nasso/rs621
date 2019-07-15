@@ -38,5 +38,5 @@ pub mod client;
 /// Error management.
 pub mod error;
 
-/// Posts management.
+/// Post management.
 pub mod post;
