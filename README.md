@@ -1,4 +1,15 @@
-# rs621 &middot; [![GitHub license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/nasso/rs621/blob/master/README.md#license) [![Build Status](https://travis-ci.com/nasso/rs621.svg?branch=master)](https://travis-ci.com/nasso/rs621) [![codecov](https://codecov.io/gh/nasso/rs621/branch/master/graph/badge.svg)](https://codecov.io/gh/nasso/rs621)
+# rs621
+[![Crates.io](https://img.shields.io/crates/v/rs621.svg)](
+https://crates.io/crates/rs621)
+[![Docs.rs](https://docs.rs/rs621/badge.svg)](https://docs.rs/rs621)
+[![Build Status](https://travis-ci.com/nasso/rs621.svg?branch=master)](
+https://travis-ci.com/nasso/rs621)
+[![codecov](https://codecov.io/gh/nasso/rs621/branch/master/graph/badge.svg)](
+https://codecov.io/gh/nasso/rs621)
+[![GitHub license](
+https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
+https://github.com/nasso/rs621/blob/master/README.md#license)
+
 Rust bindings for the [e621.net](https://e926.net) API.
 
 E621 is a large online archive of furry (anthropomorphic) art. `rs621` provides
