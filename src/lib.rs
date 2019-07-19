@@ -7,23 +7,34 @@
 //! you may be contacted if your project causes problems.
 //!
 //! ```no_run
+//! # use rs621::client::Client;
+//! # fn main() -> Result<(), rs621::error::Error> {
 //! let client = Client::new("MyProject/1.0 (by username on e621)")?;
+//! # Ok(()) }
 //! ```
 //!
 //! Now it's ready to go! For example you can get post #8595 like this:
 //!
 //! ```no_run
+//! # use rs621::client::Client;
+//! # fn main() -> Result<(), rs621::error::Error> {
+//! # let client = Client::new("MyProject/1.0 (by username on e621)")?;
 //! let post = client.get_post(8595)?;
 //!
 //! assert_eq!(post.id, 8595);
+//! # Ok(()) }
 //! ```
 //!
 //! Or you can make a search like on the website, using tags:
 //!
 //! ```no_run
+//! # use rs621::client::Client;
+//! # fn main() -> Result<(), rs621::error::Error> {
+//! # let client = Client::new("MyProject/1.0 (by username on e621)")?;
 //! for post in client.list(&["fluffy", "rating:s"][..]).take(20) {
-//!     println!("{}", post);
+//!     println!("{}", post?);
 //! }
+//! # Ok(()) }
 //! ```
 //!
 //! ## Notes from the official API:
