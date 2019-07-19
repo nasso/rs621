@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn post_from_json_basic() {
-        let example_json = include_str!("mocked/show_id_8595.json");
+        let example_json = include_str!("mocked/id_8595.json");
 
         let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
         let post = Post::try_from(&parsed).unwrap();
