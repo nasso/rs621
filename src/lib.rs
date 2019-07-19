@@ -1,5 +1,31 @@
 //! Wrapper crate for the [e621.net](https://e926.net) API.
 //!
+//! ## Usage
+//!
+//! First, create a `Client`. You have to provide a descriptive User-Agent for your
+//! project. The official API encourages you to include your E621 username so that
+//! you may be contacted if your project causes problems.
+//!
+//! ```no_run
+//! let client = Client::new("MyProject/1.0 (by username on e621)")?;
+//! ```
+//!
+//! Now it's ready to go! For example you can get post #8595 like this:
+//!
+//! ```no_run
+//! let post = client.get_post(8595)?;
+//!
+//! assert_eq!(post.id, 8595);
+//! ```
+//!
+//! Or you can make a search like on the website, using tags:
+//!
+//! ```no_run
+//! for post in client.list(&["fluffy", "rating:s"][..]).take(20) {
+//!     println!("{}", post);
+//! }
+//! ```
+//!
 //! ## Notes from the official API:
 //!
 //! ### User Agents
