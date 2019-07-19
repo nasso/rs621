@@ -43,9 +43,9 @@ assert_eq!(post.id, 8595);
 Or you can make a search like on the website, using tags:
 
 ```rust
-let posts = client.list(&["fluffy", "rating:s"][..], 5)?;
-
-assert_eq!(posts.len(), 5);
+for post in client.list(&["fluffy", "rating:s"][..], 5).take(20) {
+    println!("{}", post);
+}
 ```
 
 ## Requirements
