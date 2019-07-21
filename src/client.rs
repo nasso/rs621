@@ -164,7 +164,16 @@ impl<C: reqwest_mock::Client> Client<C> {
                         Err(e) => Err(Error::Serial(format!("{}", e))),
                     }
                 } else {
-                    Err(Error::Http(res.status.as_u16()))
+                    Err(Error::Http(
+                        res.status.as_u16(),
+                        match res.body_to_utf8() {
+                            Ok(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+                                Ok(v) => v["reason"].as_str().map(ToString::to_string),
+                                Err(_) => None,
+                            },
+                            Err(_) => None,
+                        },
+                    ))
                 }
             }
 
@@ -609,13 +618,13 @@ mod tests {
             .method(Method::GET)
             .response()
             .status_code(StatusCode::INTERNAL_SERVER_ERROR)
-            .body("")
+            .body(r#"{"success":false,"reason":"foo"}"#)
             .mock()
             .is_ok());
 
         assert_eq!(
             client.get_json("https://e621.net/post/show.json?id=8595"),
-            Err(crate::error::Error::Http(500))
+            Err(crate::error::Error::Http(500, Some(String::from("foo"))))
         );
     }
 
