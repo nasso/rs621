@@ -17,7 +17,7 @@ pub enum Error {
     /// The first value is the name of the option, the second is the value that was given to it and
     /// the third is the biggest value allowed.
     AboveLimit(String, u64, u64),
-    /// An HTTP error has occurred. The `u16` value is the HTTP error code.
+    /// An HTTP error has occurred. The `u16` value is the error code.
     Http(u16),
     /// Serialization error. Contains a description of the error.
     Serial(String),
@@ -38,7 +38,24 @@ impl fmt::Display for Error {
                 "{}:{} is above the maximum value allowed in this context ({})",
                 option, value, max
             ),
-            Error::Http(code) => write!(f, "HTTP error: {}", code),
+            Error::Http(code) => write!(f, "HTTP error {}{}", code, match code {
+                200 => String::from(" OK: Request was successful"),
+                403 => String::from(" Forbidden: Access denied. May indicate that your request lacks a User-Agent header."),
+                404 => String::from(" Not Found"),
+                420 => String::from(" Invalid Record: Record could not be saved"),
+                421 => String::from(" User Throttled: User is throttled, try again later"),
+                422 => String::from(" Locked: The resource is locked and cannot be modified"),
+                423 => String::from(" Already Exists: Resource already exists"),
+                424 => String::from(" Invalid Parameters: The given parameters were invalid"),
+                500 => String::from(" Internal Server Error: Some unknown error occurred on the server"),
+                502 => String::from(" Bad Gateway: A gateway server received an invalid response from the e621 servers"),
+                503 => String::from(" Service Unavailable: Server cannot currently handle the request or you have exceeded the request rate limit. Try again later or decrease your rate of requests."),
+                520 => String::from(" Unknown Error: Unexpected server response which violates protocol"),
+                522 => String::from(" Origin Connection Time-out: CloudFlare's attempt to connect to the e621 servers timed out"),
+                524 => String::from(" Origin Connection Time-out: A connection was established between CloudFlare and the e621 servers, but it timed out before an HTTP response was received"),
+                525 => String::from(" SSL Handshake Failed: The SSL handshake between CloudFlare and the e621 servers failed"),
+                _ => String::new(),
+            }),
             Error::Serial(msg) => write!(f, "Serialization error: {}", msg),
             Error::PostDeserialization(k, v) => {
                 write!(f, "Post JSON: invalid value for field \"{}\": {}", k, v)
