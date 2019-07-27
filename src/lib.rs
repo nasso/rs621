@@ -2,9 +2,9 @@
 //!
 //! ## Usage
 //!
-//! First, create a `Client`. You have to provide a descriptive User-Agent for your
-//! project. The official API encourages you to include your E621 username so that
-//! you may be contacted if your project causes problems.
+//! First, create a [`Client`]. You have to provide a descriptive User-Agent for your project. The
+//! official API encourages you to include your E621 username so that you may be contacted if your
+//! project causes problems.
 //!
 //! ```no_run
 //! # use rs621::client::Client;
@@ -42,15 +42,14 @@
 //! ### User Agents
 //!
 //! > A non-empty User-Agent header is required for all requests. Please pick a descriptive
-//! > User-Agent for your project. You are encouraged to include your e621 username so that you
-//! > may be contacted if your project causes problems. **DO NOT impersonate a browser user
-//! > agent, as this will get you blocked.** An example user-agent would be
+//! > User-Agent for your project. You are encouraged to include your e621 username so that you may
+//! > be contacted if your project causes problems. **DO NOT impersonate a browser user agent, as
+//! > this will get you blocked.** An example user-agent would be
 //! > ```text
 //! > MyProject/1.0 (by username on e621)
 //! > ```
-//! > Due to frequent abuse, default user agents for programming languages and libraries are
-//! > usually blocked. Please make sure that you are defining a user agent that is in line with
-//! > our policy.
+//! > Due to frequent abuse, default user agents for programming languages and libraries are usually
+//! > blocked. Please make sure that you are defining a user agent that is in line with our policy.
 //! >
 //! > [[...]](https://e926.net/help/show/api#basics)
 //!
@@ -68,6 +67,8 @@
 //! other threads will NOT be affected. Thus, **if you are using `rs621` across multiple threads,
 //! you are responsible for making sure that you aren't exceeding the upper rate limit.** Waiting
 //! for functions performing requests in other threads to return should be enough.
+//!
+//! [`Client`]: client/struct.Client.html
 
 /// Client related structures.
 pub mod client;
