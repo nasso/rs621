@@ -9,8 +9,10 @@ fn main() -> rs621::error::Result<()> {
         .list(&["fluffy", "rating:s", "order:score"][..])
         .take(10)
     {
-        let post = post?;
-        println!("- #{} with a score of {}", post.id, post.score);
+        match post {
+            Ok(post) => println!("- #{} with a score of {}", post.id, post.score),
+            Err(e) => println!("- couldn't load post: {}", e),
+        }
     }
 
     Ok(())
