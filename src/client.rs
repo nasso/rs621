@@ -50,7 +50,7 @@ impl From<&[&str]> for Query {
 
 /// Iterator returning posts from a search query.
 #[derive(Debug)]
-pub struct PostIter<'a, C> {
+pub struct PostIter<'a, C: reqwest_mock::Client> {
     client: &'a Client<C>,
     query: Query,
 
@@ -60,7 +60,7 @@ pub struct PostIter<'a, C> {
     ended: bool,
 }
 
-impl<'a, C> PostIter<'a, C> {
+impl<'a, C: reqwest_mock::Client> PostIter<'a, C> {
     fn new<T: Into<Query>>(
         client: &'a Client<C>,
         query: T,
@@ -143,7 +143,7 @@ impl<'a, C: reqwest_mock::Client> Iterator for PostIter<'a, C> {
 
 /// Client struct.
 #[derive(Debug)]
-pub struct Client<C> {
+pub struct Client<C: reqwest_mock::Client> {
     client: C,
     headers: HeaderMap,
 }
