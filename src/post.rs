@@ -331,10 +331,10 @@ where
     F: FnOnce(&'a JsonValue) -> Option<T>,
 {
     let value = &v[k];
-    p(&value).ok_or(super::error::Error::PostDeserialization(
-        k.to_string(),
-        v.to_string(),
-    ))
+    p(&value).ok_or(super::error::Error::PostDeserialization {
+        key: k.to_string(),
+        value: v.to_string(),
+    })
 }
 
 impl TryFrom<&JsonValue> for Post {

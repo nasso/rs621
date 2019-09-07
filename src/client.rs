@@ -17,9 +17,9 @@ const REQ_COOLDOWN_DURATION: ::std::time::Duration = ::std::time::Duration::from
 
 fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     if user_agent.as_ref() == b"" {
-        Err(Error::CannotCreateClient(String::from(
-            "User Agent mustn't be empty",
-        )))
+        Err(Error::CannotCreateClient {
+            desc: "User Agent mustn't be empty".into(),
+        })
     } else {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -159,25 +159,31 @@ impl<C: reqwest_mock::Client> Client<C> {
                     match res.body_to_utf8() {
                         Ok(s) => match serde_json::from_str(&s) {
                             Ok(v) => Ok(v),
-                            Err(e) => Err(Error::Serial(format!("{}", e))),
+                            Err(e) => Err(Error::Serial {
+                                desc: format!("{}", e),
+                            }),
                         },
-                        Err(e) => Err(Error::Serial(format!("{}", e))),
+                        Err(e) => Err(Error::Serial {
+                            desc: format!("{}", e),
+                        }),
                     }
                 } else {
-                    Err(Error::Http(
-                        res.status.as_u16(),
-                        match res.body_to_utf8() {
+                    Err(Error::Http {
+                        code: res.status.as_u16(),
+                        reason: match res.body_to_utf8() {
                             Ok(s) => match serde_json::from_str::<serde_json::Value>(&s) {
                                 Ok(v) => v["reason"].as_str().map(ToString::to_string),
                                 Err(_) => None,
                             },
                             Err(_) => None,
                         },
-                    ))
+                    })
                 }
             }
 
-            Err(e) => Err(Error::CannotSendRequest(format!("{}", e))),
+            Err(e) => Err(Error::CannotSendRequest {
+                desc: format!("{}", e),
+            }),
         }
     }
 
@@ -624,7 +630,10 @@ mod tests {
 
         assert_eq!(
             client.get_json("https://e621.net/post/show.json?id=8595"),
-            Err(crate::error::Error::Http(500, Some(String::from("foo"))))
+            Err(crate::error::Error::Http {
+                code: 500,
+                reason: Some(String::from("foo"))
+            })
         );
     }
 
