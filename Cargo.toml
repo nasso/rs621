@@ -1,6 +1,6 @@
 [package]
 name = "rs621"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["nasso <nassomails@gmail.com>"]
 edition = "2018"
 description = "Rust crate for the E621 API (a large online archive of furry art)."
