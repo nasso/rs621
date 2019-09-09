@@ -1,11 +1,28 @@
 use super::{
-    client::{Client, Query, ITER_CHUNK_SIZE},
+    client::{Client, ITER_CHUNK_SIZE},
     error::Result as Rs621Result,
     utils::{get_json_api_time, get_json_value_as},
 };
 use chrono::{offset::Utc, DateTime, TimeZone};
 use serde_json::Value as JsonValue;
 use std::{convert::TryFrom, fmt};
+
+/// A search query. Contains information about the tags used and an URL encoded version of the tags.
+#[derive(Debug, PartialEq, Clone)]
+pub struct Query {
+    str_url: String,
+    ordered: bool,
+}
+
+impl From<&[&str]> for Query {
+    fn from(q: &[&str]) -> Query {
+        let query_str = q.join(" ");
+        let str_url = urlencoding::encode(&query_str);
+        let ordered = q.iter().any(|t| t.starts_with("order:"));
+
+        Query { str_url, ordered }
+    }
+}
 
 /// Iterator returning posts from a search query.
 #[derive(Debug)]

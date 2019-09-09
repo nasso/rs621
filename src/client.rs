@@ -27,23 +27,6 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     }
 }
 
-/// A search query. Contains information about the tags used and an URL encoded version of the tags.
-#[derive(Debug, PartialEq, Clone)]
-pub struct Query {
-    pub(crate) str_url: String,
-    pub(crate) ordered: bool,
-}
-
-impl From<&[&str]> for Query {
-    fn from(q: &[&str]) -> Query {
-        let query_str = q.join(" ");
-        let str_url = urlencoding::encode(&query_str);
-        let ordered = q.iter().any(|t| t.starts_with("order:"));
-
-        Query { str_url, ordered }
-    }
-}
-
 /// Client struct.
 #[derive(Debug)]
 pub struct Client<C: reqwest_mock::Client> {
