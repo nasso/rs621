@@ -49,8 +49,8 @@ custom_error! { #[doc = "Enum for `rs621` errors."] #[derive(PartialEq)] pub Err
     #[doc = "Post JSON parsing error. The first value is the key of the invalid value, the second"]
     #[doc = "is its value."]
     #[derive(PartialEq)]
-    PostDeserialization{key: String, value: String} =
-        "Post JSON: invalid value for field \"{key}\": {value}",
+    Deserialization{key: String, value: String} =
+        "Invalid JSON value for \"{key}\": {value}",
 
     #[doc = "The request couldn't be send. Contains a description of the error."]
     #[derive(PartialEq)]

@@ -70,6 +70,8 @@
 //!
 //! [`Client`]: client/struct.Client.html
 
+mod utils;
+
 /// Client related structures.
 pub mod client;
 
