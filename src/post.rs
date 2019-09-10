@@ -15,7 +15,7 @@ pub struct Query {
 }
 
 impl From<&[&str]> for Query {
-    fn from(q: &[&str]) -> Query {
+    fn from(q: &[&str]) -> Self {
         let query_str = q.join(" ");
         let str_url = urlencoding::encode(&query_str);
         let ordered = q.iter().any(|t| t.starts_with("order:"));
@@ -37,11 +37,7 @@ pub struct PostIter<'a, C: reqwest_mock::Client> {
 }
 
 impl<'a, C: reqwest_mock::Client> PostIter<'a, C> {
-    fn new<T: Into<Query>>(
-        client: &'a Client<C>,
-        query: T,
-        start_id: Option<u64>,
-    ) -> PostIter<'a, C> {
+    fn new<T: Into<Query>>(client: &'a Client<C>, query: T, start_id: Option<u64>) -> Self {
         PostIter {
             client: client,
 
@@ -546,7 +542,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # use rs621::post::{Post, PostRating};
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let mut posts = client.list(&["fluffy", "rating:s"][..]);
+    /// let mut posts = client.post_list(&["fluffy", "rating:s"][..]);
     ///
     /// assert_eq!(posts.next().unwrap().unwrap().rating, PostRating::Safe);
     /// # Ok(()) }
@@ -556,7 +552,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// that the API rate limit isn't exceeded.
     ///
     /// [`LIST_HARD_LIMIT`]: constant.LIST_HARD_LIMIT.html
-    pub fn list<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a, C> {
+    pub fn post_list<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a, C> {
         PostIter::new(self, tags, None)
     }
 
@@ -569,7 +565,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
     /// let posts: Vec<_> = client
-    ///     .list_before(&["fluffy", "rating:s"][..], 123456)
+    ///     .post_list_before(&["fluffy", "rating:s"][..], 123456)
     ///     .take(5)
     ///     .collect();
     ///
@@ -582,7 +578,11 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// that the API rate limit isn't exceeded.
     ///
     /// [`LIST_HARD_LIMIT`]: constant.LIST_HARD_LIMIT.html
-    pub fn list_before<'a, T: Into<Query>>(&'a self, tags: T, before_id: u64) -> PostIter<'a, C> {
+    pub fn post_list_before<'a, T: Into<Query>>(
+        &'a self,
+        tags: T,
+        before_id: u64,
+    ) -> PostIter<'a, C> {
         PostIter::new(self, tags, Some(before_id))
     }
 }
@@ -617,7 +617,7 @@ mod tests {
 
         assert_eq!(
             client
-                .list(&["fluffy", "rating:s", "order:score"][..])
+                .post_list(&["fluffy", "rating:s", "order:score"][..])
                 .take(100)
                 .collect::<Vec<_>>(),
             serde_json::from_str::<JsonValue>(include_str!(
@@ -675,7 +675,7 @@ mod tests {
 
         assert_eq!(
             client
-                .list(&["fluffy", "rating:s", "order:score"][..])
+                .post_list(&["fluffy", "rating:s", "order:score"][..])
                 .take(400)
                 .collect::<Vec<_>>(),
             serde_json::from_str::<JsonValue>(include_str!(
@@ -731,7 +731,7 @@ mod tests {
 
         assert_eq!(
             client
-                .list_before(&["fluffy", "rating:s"][..], 1869409)
+                .post_list_before(&["fluffy", "rating:s"][..], 1869409)
                 .take(80)
                 .collect::<Vec<_>>(),
             expected
@@ -785,7 +785,7 @@ mod tests {
 
         assert_eq!(
             client
-                .list(&["fluffy", "rating:s"][..])
+                .post_list(&["fluffy", "rating:s"][..])
                 .take(400)
                 .collect::<Vec<_>>(),
             expected
@@ -816,7 +816,7 @@ mod tests {
 
         assert_eq!(
             client
-                .list(&["fluffy", "rating:s"][..])
+                .post_list(&["fluffy", "rating:s"][..])
                 .take(5)
                 .collect::<Vec<_>>(),
             expected
@@ -854,7 +854,7 @@ mod tests {
 
         assert_eq!(
             client
-                .list(&["fluffy", "rating:s"][..])
+                .post_list(&["fluffy", "rating:s"][..])
                 .take(5)
                 .collect::<Vec<_>>(),
             expected

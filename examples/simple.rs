@@ -6,7 +6,7 @@ fn main() -> rs621::error::Result<()> {
     println!("Top ten safe fluffy posts!");
 
     for post in client
-        .list(&["fluffy", "rating:s", "order:score"][..])
+        .post_list(&["fluffy", "rating:s", "order:score"][..])
         .take(10)
     {
         match post {
