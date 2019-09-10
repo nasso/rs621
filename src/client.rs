@@ -1,12 +1,6 @@
 use super::error::{Error, Result};
 use reqwest_mock::header::{self, HeaderMap, HeaderValue};
 
-/// Maximum value allowed by the API for the `limit` option.
-pub const LIST_HARD_LIMIT: u64 = 320;
-
-/// Chunk size used for iterators performing requests
-pub(crate) const ITER_CHUNK_SIZE: u64 = LIST_HARD_LIMIT;
-
 /// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
 /// so the lowest safe value we can have here is 500 ms.
 const REQ_COOLDOWN_DURATION: ::std::time::Duration = ::std::time::Duration::from_millis(600);

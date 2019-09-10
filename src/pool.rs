@@ -8,19 +8,21 @@ use chrono::{offset::Utc, DateTime};
 use serde_json::Value as JsonValue;
 use std::convert::TryFrom;
 
-/// Iterator returning pools from a search query.
+/// An iterator over [`PoolListEntry`]s.
+///
+/// [`PoolListEntry`]: struct.PoolListEntry.html
 #[derive(Debug)]
 pub struct PoolIter<'a, C: reqwest_mock::Client> {
     client: &'a Client<C>,
     query: Option<String>,
 
     page: u64,
-    chunk: Vec<Rs621Result<PoolListResult<'a, C>>>,
+    chunk: Vec<Rs621Result<PoolListEntry>>,
     ended: bool,
 }
 
-impl<'a, C: reqwest_mock::Client> PoolIter<'a, C> {
-    fn new(client: &'a Client<C>, query: Option<&str>) -> PoolIter<'a, C> {
+impl<C: reqwest_mock::Client> PoolIter<'_, C> {
+    fn new<'a>(client: &'a Client<C>, query: Option<&str>) -> PoolIter<'a, C> {
         PoolIter {
             client,
             query: query.map(urlencoding::encode),
@@ -32,10 +34,10 @@ impl<'a, C: reqwest_mock::Client> PoolIter<'a, C> {
     }
 }
 
-impl<'a, C: reqwest_mock::Client> Iterator for PoolIter<'a, C> {
-    type Item = Rs621Result<PoolListResult<'a, C>>;
+impl<C: reqwest_mock::Client> Iterator for PoolIter<'_, C> {
+    type Item = Rs621Result<PoolListEntry>;
 
-    fn next(&mut self) -> Option<Rs621Result<PoolListResult<'a, C>>> {
+    fn next(&mut self) -> Option<Rs621Result<PoolListEntry>> {
         // check if we need to load a new chunk of results
         if self.chunk.is_empty() {
             // get the JSON
@@ -58,7 +60,7 @@ impl<'a, C: reqwest_mock::Client> Iterator for PoolIter<'a, C> {
                         .unwrap()
                         .iter()
                         .rev()
-                        .map(|v| PoolListResult::try_from((v, self.client)))
+                        .map(|v| PoolListEntry::try_from(v))
                         .collect()
                 }
 
@@ -87,11 +89,34 @@ impl<'a, C: reqwest_mock::Client> Iterator for PoolIter<'a, C> {
     }
 }
 
-/// Represents results returned by `pool/index.json`.
+/// Represents the pool information returned by pool listing functions.
+///
+/// The main difference between [`PoolListEntry`] and [`Pool`] is the absence of the description
+/// field in the former.
+/// You can convert a [`PoolListEntry`] to a regular [`Pool`] using a `&Client` because [`Pool`] is
+/// `From<(PoolListEntry, &Client)>`:
+///
+/// ```no_run
+/// # use rs621::client::Client;
+/// # use rs621::pool::Pool;
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::convert::TryFrom;
+///
+/// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+///
+/// let entry: PoolListEntry = client.pool_list().next()??;
+/// let pool = Pool::try_from((entry, &client))?;
+///
+/// println!("Description of pool #{}: {}", pool.id, pool.description);
+/// # Ok(()) }
+/// ```
+/// _Note: This function performs a request; it will be subject to a short sleep time to ensure that
+/// the API rate limit isn't exceeded._
+///
+/// [`Pool`]: struct.Pool.html
+/// [`PoolListEntry`]: struct.PoolListEntry.html
 #[derive(Debug)]
-pub struct PoolListResult<'a, C: reqwest_mock::Client> {
-    client: &'a Client<C>,
-
+pub struct PoolListEntry {
     /// The raw JSON description of the pool list result (from the API).
     pub raw: String,
 
@@ -111,13 +136,11 @@ pub struct PoolListResult<'a, C: reqwest_mock::Client> {
     pub post_count: u64,
 }
 
-impl<'a, C: reqwest_mock::Client> TryFrom<(&JsonValue, &'a Client<C>)> for PoolListResult<'a, C> {
+impl TryFrom<&JsonValue> for PoolListEntry {
     type Error = super::error::Error;
 
-    fn try_from((v, client): (&JsonValue, &'a Client<C>)) -> Rs621Result<Self> {
-        Ok(PoolListResult {
-            client,
-
+    fn try_from(v: &JsonValue) -> Rs621Result<Self> {
+        Ok(PoolListEntry {
             raw: v.to_string(),
 
             id: get_json_value_as(&v, "id", JsonValue::as_u64)?,
@@ -131,6 +154,7 @@ impl<'a, C: reqwest_mock::Client> TryFrom<(&JsonValue, &'a Client<C>)> for PoolL
     }
 }
 
+/// Structure representing a pool.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Pool {
     /// The raw JSON description of the pool (from the API).
@@ -181,14 +205,18 @@ impl TryFrom<&JsonValue> for Pool {
     }
 }
 
-// An easy way to convert a PoolListResult into the corresponding regular Pool
-// Currently just uses Client::get_pool with the id from the PoolListResult
-impl<C: reqwest_mock::Client> TryFrom<PoolListResult<'_, C>> for Pool {
+impl<C: reqwest_mock::Client> TryFrom<(PoolListEntry, &Client<C>)> for Pool {
     type Error = Error;
 
-    fn try_from(r: PoolListResult<'_, C>) -> Rs621Result<Pool> {
-        let id = r.id;
-        r.client.get_pool(id)
+    /// An easy way to convert a [`PoolListEntry`] into the corresponding [`Pool`]. Currently, it's
+    /// just calling [`Client::get_pool`] with the `id` of the [`PoolListEntry`].
+    ///
+    /// [`Client`]: ../client/struct.Client.html
+    /// [`Client::get_pool`]: ../client/struct.Client.html#method.get_pool
+    /// [`Pool`]: struct.Pool.html
+    /// [`PoolListEntry`]: struct.PoolListEntry.html
+    fn try_from((r, c): (PoolListEntry, &Client<C>)) -> Rs621Result<Pool> {
+        c.get_pool(r.id)
     }
 }
 
@@ -206,29 +234,36 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # Ok(()) }
     /// ```
     ///
-    /// This function performs a request; it will be subject to a short sleep time to ensure that
-    /// the API rate limit isn't exceeded.
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
     pub fn get_pool(&self, id: u64) -> Rs621Result<Pool> {
         let body = self.get_json(&format!("https://e621.net/pool/show.json?id={}", id))?;
 
         Pool::try_from(&body)
     }
 
-    /// Returns an iterator over all the pools in the website.
+    /// Returns an iterator over all the pools on the website.
     ///
     /// ```no_run
     /// # use rs621::client::Client;
     /// # use rs621::pool::Pool;
-    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let mut pools = client.pool_list();
     ///
-    /// assert!(pools.next().unwrap().unwrap().id != 0);
+    /// for pool in client.pool_list().take(3) {
+    ///     assert!(pool?.id != 0);
+    /// }
     /// # Ok(()) }
     /// ```
     ///
-    /// This function can perform a request; it might be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded.
+    /// The iterator returns [`PoolListEntry`]s, which you can convert to regular [`Pool`]s because
+    /// [`Pool`] is `From<(PoolListEntry, &Client)>`. See [`PoolListEntry`].
+    ///
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
+    ///
+    /// [`Pool`]: ../pool/struct.Pool.html
+    /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
     pub fn pool_list<'a>(&'a self) -> PoolIter<'a, C> {
         PoolIter::new(self, None)
     }
@@ -238,16 +273,23 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// ```no_run
     /// # use rs621::client::Client;
     /// # use rs621::pool::Pool;
-    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let mut pools = client.pool_search("test");
     ///
-    /// assert!(pools.next().unwrap().unwrap().name.contains("test"));
+    /// for pool in client.pool_search("foo").take(3) {
+    ///     assert!(pool?.name.contains("foo"));
+    /// }
     /// # Ok(()) }
     /// ```
     ///
-    /// This function can perform a request; it might be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded.
+    /// The iterator returns [`PoolListEntry`]s, which you can convert to regular [`Pool`]s because
+    /// [`Pool`] is `From<(PoolListEntry, &Client)>`. See [`PoolListEntry`].
+    ///
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
+    ///
+    /// [`Pool`]: ../pool/struct.Pool.html
+    /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
     pub fn pool_search<'a>(&'a self, query: &str) -> PoolIter<'a, C> {
         PoolIter::new(self, Some(query))
     }
@@ -260,6 +302,22 @@ mod tests {
     use reqwest_mock::{Method, Url};
 
     #[test]
+    fn pool_list_result_from_json() {
+        let example_json = include_str!("mocked/pool_list_result-12668.json");
+
+        let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
+        let result = PoolListEntry::try_from(&parsed).unwrap();
+
+        assert_eq!(result.id, 12668);
+        assert_eq!(result.is_locked, false);
+        assert_eq!(result.name, "Random SFW name");
+        assert_eq!(result.post_count, 33);
+        assert_eq!(result.user_id, 171621);
+        assert_eq!(result.created_at, Utc.timestamp(1506450220, 569794000));
+        assert_eq!(result.updated_at, Utc.timestamp(1568077422, 207421000));
+    }
+
+    #[test]
     fn pool_from_json() {
         let example_json = include_str!("mocked/pool_18274.json");
 
@@ -270,6 +328,7 @@ mod tests {
         assert_eq!(pool.is_active, true);
         assert_eq!(pool.is_locked, false);
         assert_eq!(pool.name, "oBEARwatch_by_Murasaki_Yuri");
+        assert_eq!(pool.description, "");
         assert_eq!(pool.posts.len(), 8);
         assert_eq!(pool.user_id, 357072);
         assert_eq!(pool.created_at, Utc.timestamp(1567963035, 63943000));

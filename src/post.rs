@@ -1,11 +1,14 @@
 use super::{
-    client::{Client, ITER_CHUNK_SIZE},
+    client::Client,
     error::Result as Rs621Result,
     utils::{get_json_api_time, get_json_value_as},
 };
 use chrono::{offset::Utc, DateTime, TimeZone};
 use serde_json::Value as JsonValue;
 use std::{convert::TryFrom, fmt};
+
+/// Chunk size used for iterators performing requests
+const ITER_CHUNK_SIZE: u64 = 320;
 
 /// A search query. Contains information about the tags used and an URL encoded version of the tags.
 #[derive(Debug, PartialEq, Clone)]
@@ -28,7 +31,7 @@ impl From<&[&str]> for Query {
 #[derive(Debug)]
 pub struct PostIter<'a, C: reqwest_mock::Client> {
     client: &'a Client<C>,
-    query: Query,
+    query: Option<Query>,
 
     last_id: Option<u64>,
     page: u64,
@@ -37,11 +40,11 @@ pub struct PostIter<'a, C: reqwest_mock::Client> {
 }
 
 impl<'a, C: reqwest_mock::Client> PostIter<'a, C> {
-    fn new<T: Into<Query>>(client: &'a Client<C>, query: T, start_id: Option<u64>) -> Self {
+    fn new<T: Into<Query>>(client: &'a Client<C>, query: Option<T>, start_id: Option<u64>) -> Self {
         PostIter {
             client: client,
 
-            query: query.into(),
+            query: query.map(T::into),
 
             last_id: start_id,
             page: 0,
@@ -59,9 +62,9 @@ impl<'a, C: reqwest_mock::Client> Iterator for PostIter<'a, C> {
         if self.chunk.is_empty() {
             // get the JSON
             match self.client.get_json(&format!(
-                "https://e621.net/post/index.json?limit={}{}&tags={}",
+                "https://e621.net/post/index.json?limit={}{}{}",
                 ITER_CHUNK_SIZE,
-                if self.query.ordered {
+                if let Some(Query { ordered: true, .. }) = self.query {
                     self.page += 1;
                     format!("&page={}", self.page)
                 } else {
@@ -70,7 +73,10 @@ impl<'a, C: reqwest_mock::Client> Iterator for PostIter<'a, C> {
                         None => String::new(),
                     }
                 },
-                self.query.str_url
+                match &self.query {
+                    Some(q) => format!("&tags={}", q.str_url),
+                    None => String::new(),
+                }
             )) {
                 Ok(body) => {
                     // put everything in the chunk
@@ -527,37 +533,55 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # Ok(()) }
     /// ```
     ///
-    /// This function performs a request; it will be subject to a short sleep time to ensure that
-    /// the API rate limit isn't exceeded.
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
     pub fn get_post(&self, id: u64) -> Rs621Result<Post> {
         let body = self.get_json(&format!("https://e621.net/post/show.json?id={}", id))?;
 
         Post::try_from(&body)
     }
 
-    /// Performs a search with the given tags and returns an iterator over the results.
+    /// Returns an iterator over all the posts on the website.
     ///
     /// ```no_run
     /// # use rs621::client::Client;
     /// # use rs621::post::{Post, PostRating};
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let mut posts = client.post_list(&["fluffy", "rating:s"][..]);
     ///
-    /// assert_eq!(posts.next().unwrap().unwrap().rating, PostRating::Safe);
+    /// for post in client.post_list().take(3) {
+    ///     assert!(post?.id != 0);
+    /// }
     /// # Ok(()) }
     /// ```
     ///
-    /// This function can perform a request; it might be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded.
-    ///
-    /// [`LIST_HARD_LIMIT`]: constant.LIST_HARD_LIMIT.html
-    pub fn post_list<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a, C> {
-        PostIter::new(self, tags, None)
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
+    pub fn post_list<'a>(&'a self) -> PostIter<'a, C> {
+        PostIter::new::<Query>(self, None, None)
     }
 
-    /// List at most `limit` posts with IDs lower than `before_id` matching the tags. `limit` must
-    /// be below [`LIST_HARD_LIMIT`].
+    /// Returns an iterator over all the posts matching the given tags.
+    ///
+    /// ```no_run
+    /// # use rs621::client::Client;
+    /// # use rs621::post::{Post, PostRating};
+    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    ///
+    /// for post in client.post_search(&["fluffy", "rating:s"][..]).take(3) {
+    ///     assert_eq!(post?.rating, PostRating::Safe);
+    /// }
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
+    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a, C> {
+        PostIter::new(self, Some(tags), None)
+    }
+
+    /// Returns an iterator over all the posts with an ID smaller than `before_id`.
     ///
     /// ```no_run
     /// # use rs621::client::Client;
@@ -565,7 +589,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
     /// let posts: Vec<_> = client
-    ///     .post_list_before(&["fluffy", "rating:s"][..], 123456)
+    ///     .post_list_before(123456)
     ///     .take(5)
     ///     .collect();
     ///
@@ -574,16 +598,39 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// # Ok(()) }
     /// ```
     ///
-    /// This function can perform a request; it might be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded.
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
+    pub fn post_list_before<'a>(&'a self, before_id: u64) -> PostIter<'a, C> {
+        PostIter::new::<Query>(self, None, Some(before_id))
+    }
+
+    /// Returns an iterator over all the posts matching the tags and with an ID smaller than
+    /// `before_id`.
     ///
-    /// [`LIST_HARD_LIMIT`]: constant.LIST_HARD_LIMIT.html
-    pub fn post_list_before<'a, T: Into<Query>>(
+    /// ```no_run
+    /// # use rs621::client::Client;
+    /// # use rs621::post::{Post, PostRating};
+    /// # fn main() -> Result<(), rs621::error::Error> {
+    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// let posts: Vec<_> = client
+    ///     .post_search_before(&["fluffy", "rating:s"][..], 123456)
+    ///     .take(5)
+    ///     .collect();
+    ///
+    /// assert_eq!(posts.len(), 5);
+    /// assert!(posts[0].as_ref().unwrap().id < 123456);
+    /// assert_eq!(posts[0].as_ref().unwrap().rating, PostRating::Safe);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
+    /// that the API rate limit isn't exceeded._
+    pub fn post_search_before<'a, T: Into<Query>>(
         &'a self,
         tags: T,
         before_id: u64,
     ) -> PostIter<'a, C> {
-        PostIter::new(self, tags, Some(before_id))
+        PostIter::new(self, Some(tags), Some(before_id))
     }
 }
 
@@ -593,7 +640,7 @@ mod tests {
     use reqwest_mock::{Method, Url};
 
     #[test]
-    fn list_ordered() {
+    fn search_ordered() {
         let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
 
         const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
@@ -617,7 +664,7 @@ mod tests {
 
         assert_eq!(
             client
-                .post_list(&["fluffy", "rating:s", "order:score"][..])
+                .post_search(&["fluffy", "rating:s", "order:score"][..])
                 .take(100)
                 .collect::<Vec<_>>(),
             serde_json::from_str::<JsonValue>(include_str!(
@@ -634,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn list_above_limit_ordered() {
+    fn search_above_limit_ordered() {
         let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
 
         const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
@@ -675,7 +722,7 @@ mod tests {
 
         assert_eq!(
             client
-                .post_list(&["fluffy", "rating:s", "order:score"][..])
+                .post_search(&["fluffy", "rating:s", "order:score"][..])
                 .take(400)
                 .collect::<Vec<_>>(),
             serde_json::from_str::<JsonValue>(include_str!(
@@ -701,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn list_before_id() {
+    fn search_before_id() {
         let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_before-1869409_fluffy_rating-s.json");
@@ -731,7 +778,7 @@ mod tests {
 
         assert_eq!(
             client
-                .post_list_before(&["fluffy", "rating:s"][..], 1869409)
+                .post_search_before(&["fluffy", "rating:s"][..], 1869409)
                 .take(80)
                 .collect::<Vec<_>>(),
             expected
@@ -739,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn list_above_limit() {
+    fn search_above_limit() {
         let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
@@ -785,7 +832,7 @@ mod tests {
 
         assert_eq!(
             client
-                .post_list(&["fluffy", "rating:s"][..])
+                .post_search(&["fluffy", "rating:s"][..])
                 .take(400)
                 .collect::<Vec<_>>(),
             expected
@@ -793,7 +840,55 @@ mod tests {
     }
 
     #[test]
-    fn list_no_result() {
+    fn list_above_limit() {
+        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+
+        let response = include_str!("mocked/400_fluffy_rating-s.json");
+        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
+        let expected: Vec<_> = response_json
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(Post::try_from)
+            .collect();
+
+        assert!(client
+            .client
+            .stub(
+                Url::parse(&format!(
+                    "https://e621.net/post/index.json?limit={}",
+                    ITER_CHUNK_SIZE
+                ))
+                .unwrap()
+            )
+            .method(Method::GET)
+            .response()
+            .body(include_str!("mocked/320_fluffy_rating-s.json"))
+            .mock()
+            .is_ok());
+
+        assert!(client
+            .client
+            .stub(
+                Url::parse(&format!(
+                    "https://e621.net/post/index.json?limit={}&before_id={}",
+                    ITER_CHUNK_SIZE, 1869409
+                ))
+                .unwrap()
+            )
+            .method(Method::GET)
+            .response()
+            .body(include_str!(
+                "mocked/320_before-1869409_fluffy_rating-s.json"
+            ))
+            .mock()
+            .is_ok());
+
+        assert_eq!(client.post_list().take(400).collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn search_no_result() {
         let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
 
         let response = "[]";
@@ -816,7 +911,7 @@ mod tests {
 
         assert_eq!(
             client
-                .post_list(&["fluffy", "rating:s"][..])
+                .post_search(&["fluffy", "rating:s"][..])
                 .take(5)
                 .collect::<Vec<_>>(),
             expected
@@ -824,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn list_simple() {
+    fn search_simple() {
         let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
@@ -854,11 +949,43 @@ mod tests {
 
         assert_eq!(
             client
-                .post_list(&["fluffy", "rating:s"][..])
+                .post_search(&["fluffy", "rating:s"][..])
                 .take(5)
                 .collect::<Vec<_>>(),
             expected
         );
+    }
+
+    #[test]
+    fn list_simple() {
+        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+
+        let response = include_str!("mocked/320_fluffy_rating-s.json");
+        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
+        let expected: Vec<_> = response_json
+            .as_array()
+            .unwrap()
+            .iter()
+            .take(5)
+            .map(Post::try_from)
+            .collect();
+
+        assert!(client
+            .client
+            .stub(
+                Url::parse(&format!(
+                    "https://e621.net/post/index.json?limit={}",
+                    ITER_CHUNK_SIZE
+                ))
+                .unwrap()
+            )
+            .method(Method::GET)
+            .response()
+            .body(response)
+            .mock()
+            .is_ok());
+
+        assert_eq!(client.post_list().take(5).collect::<Vec<_>>(), expected);
     }
 
     #[test]
