@@ -98,13 +98,13 @@ impl<C: reqwest_mock::Client> Iterator for PoolIter<'_, C> {
 ///
 /// ```no_run
 /// # use rs621::client::Client;
-/// # use rs621::pool::Pool;
+/// # use rs621::pool::{Pool, PoolListEntry};
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use std::convert::TryFrom;
 ///
 /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
 ///
-/// let entry: PoolListEntry = client.pool_list().next()??;
+/// let entry: PoolListEntry = client.pool_list().next().unwrap()?;
 /// let pool = Pool::try_from((entry, &client))?;
 ///
 /// println!("Description of pool #{}: {}", pool.id, pool.description);

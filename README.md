@@ -18,7 +18,9 @@ the requests over HTTPS.
 
 ## Features
 
-- Regular tag searching, using any of the search options from the website.
+- Convenient iterator based API.
+- Post listing and searching, using any of the search options from the website.
+- Pool listing and searching.
 - Unlimited result count (automatically makes more requests in sequence to go
     beyond the API limit of 320 posts per request).
 
@@ -43,14 +45,15 @@ assert_eq!(post.id, 8595);
 Or you can make a search like on the website, using tags:
 
 ```rust
-for post in client.list(&["fluffy", "rating:s"][..]).take(20) {
-    println!("{}", post);
+println!("A list of cool fluffy posts:");
+for post in client.post_search(&["fluffy", "rating:s"][..]).take(20) {
+    println!("#{}", post?.id);
 }
 ```
 
 ## Requirements
 
-`rs621` uses the reqwest crate, which itself uses rust-openssl. It has some
+`rs621` uses the `rust-openssl` crate. It has some
 requirements:
 
 On Linux:

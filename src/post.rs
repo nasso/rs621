@@ -524,7 +524,6 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// ```no_run
     /// # use rs621::client::Client;
-    /// # use rs621::post::Post;
     /// # fn main() -> rs621::error::Result<()> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
     /// let post = client.get_post(8595)?;
@@ -545,11 +544,13 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// ```no_run
     /// # use rs621::client::Client;
-    /// # use rs621::post::{Post, PostRating};
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
     ///
-    /// for post in client.post_list().take(3) {
+    /// for post in client
+    ///     .post_list()
+    ///     .take(3)
+    /// {
     ///     assert!(post?.id != 0);
     /// }
     /// # Ok(()) }
@@ -565,11 +566,14 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// ```no_run
     /// # use rs621::client::Client;
-    /// # use rs621::post::{Post, PostRating};
+    /// # use rs621::post::PostRating;
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
     ///
-    /// for post in client.post_search(&["fluffy", "rating:s"][..]).take(3) {
+    /// for post in client
+    ///     .post_search(&["fluffy", "rating:s"][..])
+    ///     .take(3)
+    /// {
     ///     assert_eq!(post?.rating, PostRating::Safe);
     /// }
     /// # Ok(()) }
@@ -585,16 +589,15 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// ```no_run
     /// # use rs621::client::Client;
-    /// # use rs621::post::Post;
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let posts: Vec<_> = client
+    ///
+    /// for post in client
     ///     .post_list_before(123456)
     ///     .take(5)
-    ///     .collect();
-    ///
-    /// assert_eq!(posts.len(), 5);
-    /// assert!(posts[0].as_ref().unwrap().id < 123456);
+    /// {
+    ///     assert!(post?.id < 123456);
+    /// }
     /// # Ok(()) }
     /// ```
     ///
@@ -609,17 +612,18 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// ```no_run
     /// # use rs621::client::Client;
-    /// # use rs621::post::{Post, PostRating};
+    /// # use rs621::post::PostRating;
     /// # fn main() -> Result<(), rs621::error::Error> {
     /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let posts: Vec<_> = client
+    ///
+    /// for post in client
     ///     .post_search_before(&["fluffy", "rating:s"][..], 123456)
     ///     .take(5)
-    ///     .collect();
-    ///
-    /// assert_eq!(posts.len(), 5);
-    /// assert!(posts[0].as_ref().unwrap().id < 123456);
-    /// assert_eq!(posts[0].as_ref().unwrap().rating, PostRating::Safe);
+    /// {
+    ///     let post = post?;
+    ///     assert!(post.id < 123456);
+    ///     assert_eq!(post.rating, PostRating::Safe);
+    /// }
     /// # Ok(()) }
     /// ```
     ///
