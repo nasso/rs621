@@ -21,4 +21,7 @@ custom_error = "1.7.1"
 urlencoding = "1.0.0"
 chrono = "0.4.9"
 serde_json = "1.0.40"
-reqwest_mock = "0.6.0"
+reqwest = "0.9.20"
+
+[dev-dependencies]
+mockito = "0.20.0"

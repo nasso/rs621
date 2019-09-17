@@ -32,7 +32,7 @@
 //! # fn main() -> Result<(), rs621::error::Error> {
 //! # let client = Client::new("MyProject/1.0 (by username on e621)")?;
 //! for post in client.post_search(&["fluffy", "rating:s"][..]).take(20) {
-//!     println!("{}", post?);
+//!     println!("#{}", post?.id);
 //! }
 //! # Ok(()) }
 //! ```

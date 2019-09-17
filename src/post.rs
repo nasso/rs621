@@ -29,8 +29,8 @@ impl From<&[&str]> for Query {
 
 /// Iterator returning posts from a search query.
 #[derive(Debug)]
-pub struct PostIter<'a, C: reqwest_mock::Client> {
-    client: &'a Client<C>,
+pub struct PostIter<'a> {
+    client: &'a Client,
     query: Option<Query>,
 
     last_id: Option<u64>,
@@ -39,8 +39,8 @@ pub struct PostIter<'a, C: reqwest_mock::Client> {
     ended: bool,
 }
 
-impl<'a, C: reqwest_mock::Client> PostIter<'a, C> {
-    fn new<T: Into<Query>>(client: &'a Client<C>, query: Option<T>, start_id: Option<u64>) -> Self {
+impl<'a> PostIter<'a> {
+    fn new<T: Into<Query>>(client: &'a Client, query: Option<T>, start_id: Option<u64>) -> Self {
         PostIter {
             client: client,
 
@@ -54,15 +54,15 @@ impl<'a, C: reqwest_mock::Client> PostIter<'a, C> {
     }
 }
 
-impl<'a, C: reqwest_mock::Client> Iterator for PostIter<'a, C> {
+impl<'a> Iterator for PostIter<'a> {
     type Item = Rs621Result<Post>;
 
     fn next(&mut self) -> Option<Rs621Result<Post>> {
         // check if we need to load a new chunk of results
         if self.chunk.is_empty() {
             // get the JSON
-            match self.client.get_json(&format!(
-                "https://e621.net/post/index.json?limit={}{}{}",
+            match self.client.get_json_endpoint(&format!(
+                "/post/index.json?limit={}{}{}",
                 ITER_CHUNK_SIZE,
                 if let Some(Query { ordered: true, .. }) = self.query {
                     self.page += 1;
@@ -407,40 +407,6 @@ impl Default for Post {
     }
 }
 
-impl fmt::Display for Post {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let PostStatus::Deleted(ref reason) = &self.status {
-            writeln!(f, "#{} (deleted: {})", self.id, reason)?;
-        } else {
-            write!(f, "#{} by ", self.id)?;
-
-            let artist_count = self.artists.len();
-            for i in 0..artist_count {
-                match artist_count - i {
-                    1 => writeln!(f, "{}", self.artists[i])?,
-                    2 => write!(f, "{} and ", self.artists[i])?,
-                    _ => write!(f, "{}, ", self.artists[i])?,
-                }
-            }
-        }
-
-        writeln!(f, "Rating: {}", self.rating)?;
-
-        writeln!(f, "Score: {}", self.score)?;
-        writeln!(f, "Favs: {}", self.fav_count)?;
-
-        if let Some(ref t) = self.file_ext {
-            writeln!(f, "Type: {}", t)?;
-        }
-
-        writeln!(f, "Created at: {}", self.created_at)?;
-        writeln!(f, "Tags: {}", self.tags.join(", "))?;
-        write!(f, "Description: {}", self.description)?;
-
-        Ok(())
-    }
-}
-
 impl TryFrom<&JsonValue> for Post {
     type Error = super::error::Error;
 
@@ -519,7 +485,7 @@ impl TryFrom<&JsonValue> for Post {
     }
 }
 
-impl<C: reqwest_mock::Client> Client<C> {
+impl Client {
     /// Returns the post with the given ID.
     ///
     /// ```no_run
@@ -535,7 +501,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
     pub fn get_post(&self, id: u64) -> Rs621Result<Post> {
-        let body = self.get_json(&format!("https://e621.net/post/show.json?id={}", id))?;
+        let body = self.get_json_endpoint(&format!("/post/show.json?id={}", id))?;
 
         Post::try_from(&body)
     }
@@ -558,7 +524,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn post_list<'a>(&'a self) -> PostIter<'a, C> {
+    pub fn post_list<'a>(&'a self) -> PostIter<'a> {
         PostIter::new::<Query>(self, None, None)
     }
 
@@ -581,7 +547,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a, C> {
+    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a> {
         PostIter::new(self, Some(tags), None)
     }
 
@@ -603,7 +569,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn post_list_before<'a>(&'a self, before_id: u64) -> PostIter<'a, C> {
+    pub fn post_list_before<'a>(&'a self, before_id: u64) -> PostIter<'a> {
         PostIter::new::<Query>(self, None, Some(before_id))
     }
 
@@ -633,7 +599,7 @@ impl<C: reqwest_mock::Client> Client<C> {
         &'a self,
         tags: T,
         before_id: u64,
-    ) -> PostIter<'a, C> {
+    ) -> PostIter<'a> {
         PostIter::new(self, Some(tags), Some(before_id))
     }
 }
@@ -641,30 +607,25 @@ impl<C: reqwest_mock::Client> Client<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest_mock::{Method, Url};
+    use mockito::{mock, Matcher};
 
     #[test]
     fn search_ordered() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&page=1&tags={}",
-                    ITER_CHUNK_SIZE, REQ_TAGS
-                ))
-                .unwrap()
-            )
-            .method(Method::GET)
-            .response()
-            .body(include_str!(
-                "mocked/320_page-1_fluffy_rating-s_order-score.json"
-            ))
-            .mock()
-            .is_ok());
+        let _m = mock(
+            "GET",
+            Matcher::Exact(format!(
+                "/post/index.json?limit={}&page=1&tags={}",
+                ITER_CHUNK_SIZE, REQ_TAGS
+            )),
+        )
+        .with_body(include_str!(
+            "mocked/320_page-1_fluffy_rating-s_order-score.json"
+        ))
+        .create();
 
         assert_eq!(
             client
@@ -686,74 +647,61 @@ mod tests {
 
     #[test]
     fn search_above_limit_ordered() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
+        const PAGES: [&str; 2] = [
+            include_str!("mocked/320_page-1_fluffy_rating-s_order-score.json"),
+            include_str!("mocked/320_page-2_fluffy_rating-s_order-score.json"),
+        ];
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&page=1&tags={}",
+        let _m = [
+            mock(
+                "GET",
+                Matcher::Exact(format!(
+                    "/post/index.json?limit={}&page=1&tags={}",
                     ITER_CHUNK_SIZE, REQ_TAGS
-                ))
-                .unwrap()
+                )),
             )
-            .method(Method::GET)
-            .response()
-            .body(include_str!(
-                "mocked/320_page-1_fluffy_rating-s_order-score.json"
-            ))
-            .mock()
-            .is_ok());
-
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&page=2&tags={}",
+            .with_body(PAGES[0])
+            .create(),
+            mock(
+                "GET",
+                Matcher::Exact(format!(
+                    "/post/index.json?limit={}&page=2&tags={}",
                     ITER_CHUNK_SIZE, REQ_TAGS
-                ))
-                .unwrap()
+                )),
             )
-            .method(Method::GET)
-            .response()
-            .body(include_str!(
-                "mocked/320_page-2_fluffy_rating-s_order-score.json"
-            ))
-            .mock()
-            .is_ok());
+            .with_body(PAGES[1])
+            .create(),
+        ];
 
         assert_eq!(
             client
                 .post_search(&["fluffy", "rating:s", "order:score"][..])
                 .take(400)
                 .collect::<Vec<_>>(),
-            serde_json::from_str::<JsonValue>(include_str!(
-                "mocked/320_page-1_fluffy_rating-s_order-score.json"
-            ))
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .chain(
-                serde_json::from_str::<JsonValue>(include_str!(
-                    "mocked/320_page-2_fluffy_rating-s_order-score.json"
-                ))
+            serde_json::from_str::<JsonValue>(PAGES[0])
                 .unwrap()
                 .as_array()
                 .unwrap()
                 .iter()
-            )
-            .take(400)
-            .map(Post::try_from)
-            .collect::<Vec<_>>()
+                .chain(
+                    serde_json::from_str::<JsonValue>(PAGES[1])
+                        .unwrap()
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                )
+                .take(400)
+                .map(Post::try_from)
+                .collect::<Vec<_>>()
         );
     }
 
     #[test]
     fn search_before_id() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_before-1869409_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -765,20 +713,15 @@ mod tests {
             .map(Post::try_from)
             .collect();
 
-        let request = Url::parse(&format!(
-            "https://e621.net/post/index.json?limit={}&before_id=1869409&tags=fluffy%20rating%3As",
-            ITER_CHUNK_SIZE
-        ))
-        .unwrap();
-
-        assert!(client
-            .client
-            .stub(request)
-            .method(Method::GET)
-            .response()
-            .body(response)
-            .mock()
-            .is_ok());
+        let _m = mock(
+            "GET",
+            Matcher::Exact(format!(
+                "/post/index.json?limit={}&before_id=1869409&tags=fluffy%20rating%3As",
+                ITER_CHUNK_SIZE
+            )),
+        )
+        .with_body(response)
+        .create();
 
         assert_eq!(
             client
@@ -791,7 +734,7 @@ mod tests {
 
     #[test]
     fn search_above_limit() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -802,37 +745,28 @@ mod tests {
             .map(Post::try_from)
             .collect();
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&tags=fluffy%20rating%3As",
+        let _m = [
+            mock(
+                "GET",
+                Matcher::Exact(format!(
+                    "/post/index.json?limit={}&tags=fluffy%20rating%3As",
                     ITER_CHUNK_SIZE
-                ))
-                .unwrap()
+                )),
             )
-            .method(Method::GET)
-            .response()
-            .body(include_str!("mocked/320_fluffy_rating-s.json"))
-            .mock()
-            .is_ok());
-
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&before_id={}&tags={}",
-                    ITER_CHUNK_SIZE, 1869409, "fluffy%20rating%3As"
-                ))
-                .unwrap()
+            .with_body(include_str!("mocked/320_fluffy_rating-s.json"))
+            .create(),
+            mock(
+                "GET",
+                Matcher::Exact(format!(
+                    "/post/index.json?limit={}&before_id=1869409&tags={}",
+                    ITER_CHUNK_SIZE, "fluffy%20rating%3As"
+                )),
             )
-            .method(Method::GET)
-            .response()
-            .body(include_str!(
+            .with_body(include_str!(
                 "mocked/320_before-1869409_fluffy_rating-s.json"
             ))
-            .mock()
-            .is_ok());
+            .create(),
+        ];
 
         assert_eq!(
             client
@@ -845,7 +779,7 @@ mod tests {
 
     #[test]
     fn list_above_limit() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -856,62 +790,45 @@ mod tests {
             .map(Post::try_from)
             .collect();
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}",
-                    ITER_CHUNK_SIZE
-                ))
-                .unwrap()
+        let _m = [
+            mock(
+                "GET",
+                Matcher::Exact(format!("/post/index.json?limit={}", ITER_CHUNK_SIZE)),
             )
-            .method(Method::GET)
-            .response()
-            .body(include_str!("mocked/320_fluffy_rating-s.json"))
-            .mock()
-            .is_ok());
-
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&before_id={}",
-                    ITER_CHUNK_SIZE, 1869409
-                ))
-                .unwrap()
+            .with_body(include_str!("mocked/320_fluffy_rating-s.json"))
+            .create(),
+            mock(
+                "GET",
+                Matcher::Exact(format!(
+                    "/post/index.json?limit={}&before_id=1869409",
+                    ITER_CHUNK_SIZE,
+                )),
             )
-            .method(Method::GET)
-            .response()
-            .body(include_str!(
+            .with_body(include_str!(
                 "mocked/320_before-1869409_fluffy_rating-s.json"
             ))
-            .mock()
-            .is_ok());
+            .create(),
+        ];
 
         assert_eq!(client.post_list().take(400).collect::<Vec<_>>(), expected);
     }
 
     #[test]
     fn search_no_result() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = "[]";
         let expected = Vec::new();
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&tags=fluffy%20rating%3As",
-                    ITER_CHUNK_SIZE
-                ))
-                .unwrap()
-            )
-            .method(Method::GET)
-            .response()
-            .body(response)
-            .mock()
-            .is_ok());
+        let _m = mock(
+            "GET",
+            Matcher::Exact(format!(
+                "/post/index.json?limit={}&tags=fluffy%20rating%3As",
+                ITER_CHUNK_SIZE
+            )),
+        )
+        .with_body(response)
+        .create();
 
         assert_eq!(
             client
@@ -924,7 +841,7 @@ mod tests {
 
     #[test]
     fn search_simple() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -936,20 +853,15 @@ mod tests {
             .map(Post::try_from)
             .collect();
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}&tags=fluffy%20rating%3As",
-                    ITER_CHUNK_SIZE
-                ))
-                .unwrap()
-            )
-            .method(Method::GET)
-            .response()
-            .body(response)
-            .mock()
-            .is_ok());
+        let _m = mock(
+            "GET",
+            Matcher::Exact(format!(
+                "/post/index.json?limit={}&tags=fluffy%20rating%3As",
+                ITER_CHUNK_SIZE
+            )),
+        )
+        .with_body(response)
+        .create();
 
         assert_eq!(
             client
@@ -962,7 +874,7 @@ mod tests {
 
     #[test]
     fn list_simple() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -974,40 +886,27 @@ mod tests {
             .map(Post::try_from)
             .collect();
 
-        assert!(client
-            .client
-            .stub(
-                Url::parse(&format!(
-                    "https://e621.net/post/index.json?limit={}",
-                    ITER_CHUNK_SIZE
-                ))
-                .unwrap()
-            )
-            .method(Method::GET)
-            .response()
-            .body(response)
-            .mock()
-            .is_ok());
+        let _m = mock(
+            "GET",
+            Matcher::Exact(format!("/post/index.json?limit={}", ITER_CHUNK_SIZE)),
+        )
+        .with_body(response)
+        .create();
 
         assert_eq!(client.post_list().take(5).collect::<Vec<_>>(), expected);
     }
 
     #[test]
     fn get_post_by_id() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/id_8595.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
         let expected = Post::try_from(&response_json).unwrap();
 
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/post/show.json?id=8595").unwrap())
-            .method(Method::GET)
-            .response()
-            .body(response)
-            .mock()
-            .is_ok());
+        let _m = mock("GET", "/post/show.json?id=8595")
+            .with_body(response)
+            .create();
 
         assert_eq!(client.get_post(8595), Ok(expected));
     }

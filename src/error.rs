@@ -1,4 +1,4 @@
-use reqwest_mock::header::InvalidHeaderValue;
+use reqwest::header::InvalidHeaderValue;
 
 use custom_error::custom_error;
 

@@ -12,8 +12,8 @@ use std::convert::TryFrom;
 ///
 /// [`PoolListEntry`]: struct.PoolListEntry.html
 #[derive(Debug)]
-pub struct PoolIter<'a, C: reqwest_mock::Client> {
-    client: &'a Client<C>,
+pub struct PoolIter<'a> {
+    client: &'a Client,
     query: Option<String>,
 
     page: u64,
@@ -21,8 +21,8 @@ pub struct PoolIter<'a, C: reqwest_mock::Client> {
     ended: bool,
 }
 
-impl<C: reqwest_mock::Client> PoolIter<'_, C> {
-    fn new<'a>(client: &'a Client<C>, query: Option<&str>) -> PoolIter<'a, C> {
+impl PoolIter<'_> {
+    fn new<'a>(client: &'a Client, query: Option<&str>) -> PoolIter<'a> {
         PoolIter {
             client,
             query: query.map(urlencoding::encode),
@@ -34,15 +34,15 @@ impl<C: reqwest_mock::Client> PoolIter<'_, C> {
     }
 }
 
-impl<C: reqwest_mock::Client> Iterator for PoolIter<'_, C> {
+impl Iterator for PoolIter<'_> {
     type Item = Rs621Result<PoolListEntry>;
 
     fn next(&mut self) -> Option<Rs621Result<PoolListEntry>> {
         // check if we need to load a new chunk of results
         if self.chunk.is_empty() {
             // get the JSON
-            match self.client.get_json(&format!(
-                "https://e621.net/pool/index.json?page={}{}",
+            match self.client.get_json_endpoint(&format!(
+                "/pool/index.json?page={}{}",
                 {
                     let page = self.page;
                     self.page += 1;
@@ -205,7 +205,7 @@ impl TryFrom<&JsonValue> for Pool {
     }
 }
 
-impl<C: reqwest_mock::Client> TryFrom<(PoolListEntry, &Client<C>)> for Pool {
+impl TryFrom<(PoolListEntry, &Client)> for Pool {
     type Error = Error;
 
     /// An easy way to convert a [`PoolListEntry`] into the corresponding [`Pool`]. Currently, it's
@@ -215,12 +215,12 @@ impl<C: reqwest_mock::Client> TryFrom<(PoolListEntry, &Client<C>)> for Pool {
     /// [`Client::get_pool`]: ../client/struct.Client.html#method.get_pool
     /// [`Pool`]: struct.Pool.html
     /// [`PoolListEntry`]: struct.PoolListEntry.html
-    fn try_from((r, c): (PoolListEntry, &Client<C>)) -> Rs621Result<Pool> {
+    fn try_from((r, c): (PoolListEntry, &Client)) -> Rs621Result<Pool> {
         c.get_pool(r.id)
     }
 }
 
-impl<C: reqwest_mock::Client> Client<C> {
+impl Client {
     /// Returns the pool with the given ID.
     ///
     /// ```no_run
@@ -237,7 +237,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
     pub fn get_pool(&self, id: u64) -> Rs621Result<Pool> {
-        let body = self.get_json(&format!("https://e621.net/pool/show.json?id={}", id))?;
+        let body = self.get_json_endpoint(&format!("/pool/show.json?id={}", id))?;
 
         Pool::try_from(&body)
     }
@@ -264,7 +264,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// [`Pool`]: ../pool/struct.Pool.html
     /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
-    pub fn pool_list<'a>(&'a self) -> PoolIter<'a, C> {
+    pub fn pool_list<'a>(&'a self) -> PoolIter<'a> {
         PoolIter::new(self, None)
     }
 
@@ -290,7 +290,7 @@ impl<C: reqwest_mock::Client> Client<C> {
     ///
     /// [`Pool`]: ../pool/struct.Pool.html
     /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
-    pub fn pool_search<'a>(&'a self, query: &str) -> PoolIter<'a, C> {
+    pub fn pool_search<'a>(&'a self, query: &str) -> PoolIter<'a> {
         PoolIter::new(self, Some(query))
     }
 }
@@ -299,7 +299,7 @@ impl<C: reqwest_mock::Client> Client<C> {
 mod tests {
     use super::*;
     use chrono::offset::TimeZone;
-    use reqwest_mock::{Method, Url};
+    use mockito::mock;
 
     #[test]
     fn pool_list_result_from_json() {
@@ -337,16 +337,11 @@ mod tests {
 
     #[test]
     fn get_pool() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/pool/show.json?id=18274").unwrap())
-            .method(Method::GET)
-            .response()
-            .body(include_str!("mocked/pool_18274.json"))
-            .mock()
-            .is_ok());
+        let _m = mock("GET", "/pool/show.json?id=18274")
+            .with_body(include_str!("mocked/pool_18274.json"))
+            .create();
 
         let pool = client.get_pool(18274).unwrap();
         assert_eq!(pool.id, 18274);
@@ -354,34 +349,20 @@ mod tests {
 
     #[test]
     fn pool_list() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/pool/index.json?page=1").unwrap())
-            .method(Method::GET)
-            .response()
-            .body(include_str!("mocked/pool_list-page_1.json"))
-            .mock()
-            .is_ok());
-
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/pool/index.json?page=2").unwrap())
-            .method(Method::GET)
-            .response()
-            .body(include_str!("mocked/pool_list-page_2.json"))
-            .mock()
-            .is_ok());
-
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/pool/index.json?page=3").unwrap())
-            .method(Method::GET)
-            .response()
-            .body("[]")
-            .mock()
-            .is_ok());
+        let _m = [
+            mock("GET", "/pool/index.json?page=1")
+                .with_body(include_str!("mocked/pool_list-page_1.json"))
+                .create(),
+            mock("GET", "/pool/index.json?page=2")
+                .with_body(include_str!("mocked/pool_list-page_2.json"))
+                .create(),
+            // have the next page be empty to end the iterator
+            mock("GET", "/pool/index.json?page=3")
+                .with_body("[]")
+                .create(),
+        ];
 
         let pools: Vec<_> = client.pool_list().collect();
 
@@ -391,25 +372,17 @@ mod tests {
 
     #[test]
     fn pool_search() {
-        let mut client = Client::new_mocked(b"rs621/unit_test").unwrap();
+        let client = Client::new(b"rs621/unit_test").unwrap();
 
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/pool/index.json?page=1&query=foo").unwrap())
-            .method(Method::GET)
-            .response()
-            .body(include_str!("mocked/pool_search-foo.json"))
-            .mock()
-            .is_ok());
-
-        assert!(client
-            .client
-            .stub(Url::parse("https://e621.net/pool/index.json?page=2&query=foo").unwrap())
-            .method(Method::GET)
-            .response()
-            .body("[]")
-            .mock()
-            .is_ok());
+        let _m = [
+            mock("GET", "/pool/index.json?page=1&query=foo")
+                .with_body(include_str!("mocked/pool_search-foo.json"))
+                .create(),
+            // have the next page be empty to end the iterator
+            mock("GET", "/pool/index.json?page=2&query=foo")
+                .with_body("[]")
+                .create(),
+        ];
 
         // Should all contain foo in the name
         for pool in client.pool_search("foo") {
