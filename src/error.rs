@@ -8,15 +8,9 @@ use custom_error::custom_error;
 pub type Result<T> = ::std::result::Result<T, Error>;
 
 custom_error! { #[doc = "Enum for `rs621` errors."] #[derive(PartialEq)] pub Error
-    #[doc = "The given value for the some option is above the maximum value allowed in its"]
-    #[doc = "context. E.g.: `order:score limit:350` is an invalid request because the maximum"]
-    #[doc = "limit for ordered queries is 320."]
-    #[derive(PartialEq)]
     AboveLimit{option: String, val: u64, max: u64} =
         "{option}:{val} is above the maximum value allowed in this context ({max})",
 
-    #[doc = "An HTTP error has occurred"]
-    #[derive(PartialEq)]
     Http{code: u16, reason: Option<String>} = @{
         format!("HTTP error {}{}", code, match reason {
             Some(reason) => format!(": {}", reason),
@@ -42,26 +36,15 @@ custom_error! { #[doc = "Enum for `rs621` errors."] #[derive(PartialEq)] pub Err
         })
     },
 
-    #[doc = "Serialization error. Contains a description of the error."]
-    #[derive(PartialEq)]
     Serial{desc: String} = "Serialization error: {desc}",
 
-    #[doc = "Post JSON parsing error. The first value is the key of the invalid value, the second"]
-    #[doc = "is its value."]
-    #[derive(PartialEq)]
     Deserialization{key: String, value: String} =
         "Invalid JSON value for \"{key}\": {value}",
 
-    #[doc = "The request couldn't be send. Contains a description of the error."]
-    #[derive(PartialEq)]
     CannotSendRequest{desc: String} = "Couldn't send request: {desc}",
 
-    #[doc = "The client couldn't be created. Contains a description of the error."]
-    #[derive(PartialEq)]
     CannotCreateClient{desc: String} = "Couldn't create client: {desc}",
 
-    #[doc = "The given HTTP header is invalid"]
-    #[derive(PartialEq)]
     InvalidHeaderValue{desc: String} = "Invalid header value",
 }
 
