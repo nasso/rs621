@@ -1,10 +1,11 @@
 use super::{
     client::Client,
-    error::{Error, Result as Rs621Result},
+    error::Result as Rs621Result,
     post::Post,
     utils::{get_json_api_time, get_json_value_as},
 };
 use chrono::{offset::Utc, DateTime};
+use futures::executor::block_on;
 use serde_json::Value as JsonValue;
 use std::convert::TryFrom;
 
@@ -41,7 +42,7 @@ impl Iterator for PoolIter<'_> {
         // check if we need to load a new chunk of results
         if self.chunk.is_empty() {
             // get the JSON
-            match self.client.get_json_endpoint(&format!(
+            match block_on(self.client.get_json_endpoint(&format!(
                 "/pool/index.json?page={}{}",
                 {
                     let page = self.page;
@@ -52,7 +53,7 @@ impl Iterator for PoolIter<'_> {
                     None => String::new(),
                     Some(title) => format!("&query={}", title),
                 }
-            )) {
+            ))) {
                 Ok(body) => {
                     // put everything in the chunk
                     self.chunk = body
@@ -205,21 +206,6 @@ impl TryFrom<&JsonValue> for Pool {
     }
 }
 
-impl TryFrom<(PoolListEntry, &Client)> for Pool {
-    type Error = Error;
-
-    /// An easy way to convert a [`PoolListEntry`] into the corresponding [`Pool`]. Currently, it's
-    /// just calling [`Client::get_pool`] with the `id` of the [`PoolListEntry`].
-    ///
-    /// [`Client`]: ../client/struct.Client.html
-    /// [`Client::get_pool`]: ../client/struct.Client.html#method.get_pool
-    /// [`Pool`]: struct.Pool.html
-    /// [`PoolListEntry`]: struct.PoolListEntry.html
-    fn try_from((r, c): (PoolListEntry, &Client)) -> Rs621Result<Pool> {
-        c.get_pool(r.id)
-    }
-}
-
 impl Client {
     /// Returns the pool with the given ID.
     ///
@@ -236,8 +222,10 @@ impl Client {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn get_pool(&self, id: u64) -> Rs621Result<Pool> {
-        let body = self.get_json_endpoint(&format!("/pool/show.json?id={}", id))?;
+    pub async fn get_pool(&self, id: u64) -> Rs621Result<Pool> {
+        let body = self
+            .get_json_endpoint(&format!("/pool/show.json?id={}", id))
+            .await?;
 
         Pool::try_from(&body)
     }
@@ -301,8 +289,8 @@ mod tests {
     use chrono::offset::TimeZone;
     use mockito::mock;
 
-    #[test]
-    fn pool_list_result_from_json() {
+    #[tokio::test]
+    async fn pool_list_result_from_json() {
         let example_json = include_str!("mocked/pool_list_result-12668.json");
 
         let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
@@ -317,8 +305,8 @@ mod tests {
         assert_eq!(result.updated_at, Utc.timestamp(1568077422, 207421000));
     }
 
-    #[test]
-    fn pool_from_json() {
+    #[tokio::test]
+    async fn pool_from_json() {
         let example_json = include_str!("mocked/pool_18274.json");
 
         let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
@@ -335,20 +323,20 @@ mod tests {
         assert_eq!(pool.updated_at, Utc.timestamp(1567964144, 960193000));
     }
 
-    #[test]
-    fn get_pool() {
+    #[tokio::test]
+    async fn get_pool() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let _m = mock("GET", "/pool/show.json?id=18274")
             .with_body(include_str!("mocked/pool_18274.json"))
             .create();
 
-        let pool = client.get_pool(18274).unwrap();
+        let pool = client.get_pool(18274).await.unwrap();
         assert_eq!(pool.id, 18274);
     }
 
-    #[test]
-    fn pool_list() {
+    #[tokio::test]
+    async fn pool_list() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let _m = [
@@ -370,8 +358,8 @@ mod tests {
         assert_eq!(pools.len(), 6);
     }
 
-    #[test]
-    fn pool_search() {
+    #[tokio::test]
+    async fn pool_search() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let _m = [

@@ -1,4 +1,5 @@
 use super::error::{Error, Result};
+use futures::prelude::*;
 use reqwest::header::{HeaderMap, HeaderValue};
 
 /// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
@@ -24,6 +25,7 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
 /// Client struct.
 #[derive(Debug)]
 pub struct Client {
+    url: String,
     pub(crate) client: reqwest::Client,
     headers: HeaderMap,
 }
@@ -32,51 +34,52 @@ impl Client {
     /// Create a new client with the specified value for the User-Agent header. The API requires a
     /// non-empty User-Agent header for all requests, preferably including your E621 username and
     /// the name of your project.
-    pub fn new(user_agent: impl AsRef<[u8]>) -> Result<Self> {
+    pub fn new(url: &str, user_agent: impl AsRef<[u8]>) -> Result<Self> {
         Ok(Client {
+            url: url.to_string(),
             client: reqwest::Client::new(),
             headers: create_header_map(user_agent)?,
         })
     }
 
-    pub(crate) fn get_json_endpoint(&self, endpoint: &str) -> Result<serde_json::Value> {
-        #[cfg(not(test))]
-        let url = "https://e621.net";
-
-        #[cfg(test)]
-        let url = &mockito::server_url();
-
+    pub(crate) fn get_json_endpoint(
+        &self,
+        endpoint: &str,
+    ) -> impl Future<Output = Result<serde_json::Value>> {
         // Wait first to make sure we're not exceeding the limit
         ::std::thread::sleep(REQ_COOLDOWN_DURATION);
 
-        match self
+        let request = self
             .client
-            .get(&format!("{}{}", url, endpoint))
+            .get(&format!("{}{}", self.url, endpoint))
             .headers(self.headers.clone())
-            .send()
-        {
-            Ok(mut res) => {
-                if res.status().is_success() {
-                    match res.json() {
-                        Ok(v) => Ok(v),
-                        Err(e) => Err(Error::Serial {
-                            desc: format!("{}", e),
-                        }),
-                    }
-                } else {
-                    Err(Error::Http {
-                        code: res.status().as_u16(),
-                        reason: match res.json::<serde_json::Value>() {
-                            Ok(v) => v["reason"].as_str().map(ToString::to_string),
-                            Err(_) => None,
-                        },
-                    })
-                }
-            }
+            .send();
 
-            Err(e) => Err(Error::CannotSendRequest {
-                desc: format!("{}", e),
-            }),
+        async move {
+            match request.await {
+                Ok(res) => {
+                    if res.status().is_success() {
+                        match res.json().await {
+                            Ok(v) => Ok(v),
+                            Err(e) => Err(Error::Serial {
+                                desc: format!("{}", e),
+                            }),
+                        }
+                    } else {
+                        Err(Error::Http {
+                            code: res.status().as_u16(),
+                            reason: match res.json::<serde_json::Value>().await {
+                                Ok(v) => v["reason"].as_str().map(ToString::to_string),
+                                Err(_) => None,
+                            },
+                        })
+                    }
+                }
+
+                Err(e) => Err(Error::CannotSendRequest {
+                    desc: format!("{}", e),
+                }),
+            }
         }
     }
 }
@@ -84,11 +87,12 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::executor::block_on;
     use mockito::mock;
 
-    #[test]
-    fn get_json_endpoint_http_error() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+    #[tokio::test]
+    async fn get_json_endpoint_http_error() {
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let _m = mock("GET", "/post/show.json?id=8595")
             .with_status(500)
@@ -96,7 +100,7 @@ mod tests {
             .create();
 
         assert_eq!(
-            client.get_json_endpoint("/post/show.json?id=8595"),
+            block_on(client.get_json_endpoint("/post/show.json?id=8595")),
             Err(crate::error::Error::Http {
                 code: 500,
                 reason: Some(String::from("foo"))
@@ -104,16 +108,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn get_json_endpoint_success() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+    #[tokio::test]
+    async fn get_json_endpoint_success() {
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let _m = mock("GET", "/post/show.json?id=8595")
             .with_body(r#"{"dummy":"json"}"#)
             .create();
 
         assert_eq!(
-            client.get_json_endpoint("/post/show.json?id=8595"),
+            block_on(client.get_json_endpoint("/post/show.json?id=8595")),
             Ok({
                 let mut m = serde_json::Map::new();
                 m.insert(String::from("dummy"), "json".into());
@@ -122,18 +126,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn create_header_map_works() {
+    #[tokio::test]
+    async fn create_header_map_works() {
         assert!(create_header_map(b"rs621/unit_test").is_ok());
     }
 
-    #[test]
-    fn create_header_map_requires_valid_user_agent() {
+    #[tokio::test]
+    async fn create_header_map_requires_valid_user_agent() {
         assert!(create_header_map(b"\n").is_err());
     }
 
-    #[test]
-    fn create_header_map_requires_non_empty_user_agent() {
+    #[tokio::test]
+    async fn create_header_map_requires_non_empty_user_agent() {
         assert!(create_header_map(b"").is_err());
     }
 }

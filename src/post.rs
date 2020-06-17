@@ -4,8 +4,13 @@ use super::{
     utils::{get_json_api_time, get_json_value_as},
 };
 use chrono::{offset::Utc, DateTime, TimeZone};
+use futures::{
+    prelude::*,
+    stream::Stream,
+    task::{Context, Poll},
+};
 use serde_json::Value as JsonValue;
-use std::{convert::TryFrom, fmt};
+use std::{convert::TryFrom, fmt, pin::Pin};
 
 /// Chunk size used for iterators performing requests
 const ITER_CHUNK_SIZE: u64 = 320;
@@ -28,10 +33,12 @@ impl From<&[&str]> for Query {
 }
 
 /// Iterator returning posts from a search query.
-#[derive(Debug)]
-pub struct PostIter<'a> {
+pub struct PostStream<'a> {
     client: &'a Client,
     query: Option<Query>,
+
+    query_url: Option<String>,
+    query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
 
     last_id: Option<u64>,
     page: u64,
@@ -39,12 +46,14 @@ pub struct PostIter<'a> {
     ended: bool,
 }
 
-impl<'a> PostIter<'a> {
+impl<'a> PostStream<'a> {
     fn new<T: Into<Query>>(client: &'a Client, query: Option<T>, start_id: Option<u64>) -> Self {
-        PostIter {
+        PostStream {
             client: client,
 
             query: query.map(T::into),
+            query_url: None,
+            query_future: None,
 
             last_id: start_id,
             page: 0,
@@ -54,33 +63,17 @@ impl<'a> PostIter<'a> {
     }
 }
 
-impl<'a> Iterator for PostIter<'a> {
+impl<'a> Stream for PostStream<'a> {
     type Item = Rs621Result<Post>;
 
-    fn next(&mut self) -> Option<Rs621Result<Post>> {
-        // check if we need to load a new chunk of results
-        if self.chunk.is_empty() {
-            // get the JSON
-            match self.client.get_json_endpoint(&format!(
-                "/post/index.json?limit={}{}{}",
-                ITER_CHUNK_SIZE,
-                if let Some(Query { ordered: true, .. }) = self.query {
-                    self.page += 1;
-                    format!("&page={}", self.page)
-                } else {
-                    match self.last_id {
-                        Some(i) => format!("&before_id={}", i),
-                        None => String::new(),
-                    }
-                },
-                match &self.query {
-                    Some(q) => format!("&tags={}", q.str_url),
-                    None => String::new(),
-                }
-            )) {
-                Ok(body) => {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Rs621Result<Post>>> {
+        let this = self.get_mut();
+
+        if let Some(ref mut fut) = this.query_future {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(body)) => {
                     // put everything in the chunk
-                    self.chunk = body
+                    this.chunk = body
                         .as_array()
                         .unwrap()
                         .iter()
@@ -90,23 +83,55 @@ impl<'a> Iterator for PostIter<'a> {
                 }
 
                 // if something goes wrong, make the chunk be a single Err, and end the iterator
-                Err(e) => {
-                    self.ended = true;
-                    self.chunk = vec![Err(e)]
+                Poll::Ready(Err(e)) => {
+                    this.ended = true;
+                    this.chunk = vec![Err(e)]
+                }
+
+                Poll::Pending => {
+                    return Poll::Pending;
                 }
             }
         }
 
-        // it's over if the chunk is still empty
-        self.ended |= self.chunk.is_empty();
+        // check if we need to load a new chunk of results
+        if this.chunk.is_empty() {
+            let url = format!(
+                "/post/index.json?limit={}{}{}",
+                ITER_CHUNK_SIZE,
+                if let Some(Query { ordered: true, .. }) = this.query {
+                    this.page += 1;
+                    format!("&page={}", this.page)
+                } else {
+                    match this.last_id {
+                        Some(i) => format!("&before_id={}", i),
+                        None => String::new(),
+                    }
+                },
+                match &this.query {
+                    Some(q) => format!("&tags={}", q.str_url),
+                    None => String::new(),
+                }
+            );
+            this.query_url = Some(url);
 
-        if !self.ended {
+            // get the JSON
+            this.query_future = Some(Box::pin(
+                this.client
+                    .get_json_endpoint(this.query_url.as_ref().unwrap()),
+            ));
+        }
+
+        // it's over if the chunk is still empty
+        this.ended |= this.chunk.is_empty();
+
+        Poll::Ready(if !this.ended {
             // get a post
-            let post = self.chunk.pop().unwrap();
+            let post = this.chunk.pop().unwrap();
 
             // if there's an actual post, then it's the new last_id
             if let Ok(ref p) = post {
-                self.last_id = Some(p.id);
+                this.last_id = Some(p.id);
             }
 
             // give them the post because we're nice
@@ -114,8 +139,8 @@ impl<'a> Iterator for PostIter<'a> {
         } else {
             // pops any eventual error
             // Vec::pop returns None if the Vec is empty anyway
-            self.chunk.pop()
-        }
+            this.chunk.pop()
+        })
     }
 }
 
@@ -500,8 +525,10 @@ impl Client {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn get_post(&self, id: u64) -> Rs621Result<Post> {
-        let body = self.get_json_endpoint(&format!("/post/show.json?id={}", id))?;
+    pub async fn get_post(&self, id: u64) -> Rs621Result<Post> {
+        let body = self
+            .get_json_endpoint(&format!("/post/show.json?id={}", id))
+            .await?;
 
         Post::try_from(&body)
     }
@@ -524,8 +551,8 @@ impl Client {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn post_list<'a>(&'a self) -> PostIter<'a> {
-        PostIter::new::<Query>(self, None, None)
+    pub fn post_list<'a>(&'a self) -> PostStream<'a> {
+        PostStream::new::<Query>(self, None, None)
     }
 
     /// Returns an iterator over all the posts matching the given tags.
@@ -547,8 +574,8 @@ impl Client {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostIter<'a> {
-        PostIter::new(self, Some(tags), None)
+    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostStream<'a> {
+        PostStream::new(self, Some(tags), None)
     }
 
     /// Returns an iterator over all the posts with an ID smaller than `before_id`.
@@ -569,8 +596,8 @@ impl Client {
     ///
     /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
     /// that the API rate limit isn't exceeded._
-    pub fn post_list_before<'a>(&'a self, before_id: u64) -> PostIter<'a> {
-        PostIter::new::<Query>(self, None, Some(before_id))
+    pub fn post_list_before<'a>(&'a self, before_id: u64) -> PostStream<'a> {
+        PostStream::new::<Query>(self, None, Some(before_id))
     }
 
     /// Returns an iterator over all the posts matching the tags and with an ID smaller than
@@ -599,8 +626,8 @@ impl Client {
         &'a self,
         tags: T,
         before_id: u64,
-    ) -> PostIter<'a> {
-        PostIter::new(self, Some(tags), Some(before_id))
+    ) -> PostStream<'a> {
+        PostStream::new(self, Some(tags), Some(before_id))
     }
 }
 
@@ -609,9 +636,9 @@ mod tests {
     use super::*;
     use mockito::{mock, Matcher};
 
-    #[test]
-    fn search_ordered() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+    #[tokio::test]
+    async fn search_ordered() {
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
 
@@ -645,9 +672,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn search_above_limit_ordered() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+    #[tokio::test]
+    async fn search_above_limit_ordered() {
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
         const PAGES: [&str; 2] = [
@@ -699,8 +726,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn search_before_id() {
+    #[tokio::test]
+    async fn search_before_id() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_before-1869409_fluffy_rating-s.json");
@@ -732,8 +759,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn search_above_limit() {
+    #[tokio::test]
+    async fn search_above_limit() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
@@ -777,8 +804,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_above_limit() {
+    #[tokio::test]
+    async fn list_above_limit() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
@@ -813,8 +840,8 @@ mod tests {
         assert_eq!(client.post_list().take(400).collect::<Vec<_>>(), expected);
     }
 
-    #[test]
-    fn search_no_result() {
+    #[tokio::test]
+    async fn search_no_result() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = "[]";
@@ -839,8 +866,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn search_simple() {
+    #[tokio::test]
+    async fn search_simple() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
@@ -872,8 +899,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_simple() {
+    #[tokio::test]
+    async fn list_simple() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
@@ -896,8 +923,8 @@ mod tests {
         assert_eq!(client.post_list().take(5).collect::<Vec<_>>(), expected);
     }
 
-    #[test]
-    fn get_post_by_id() {
+    #[tokio::test]
+    async fn get_post_by_id() {
         let client = Client::new(b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/id_8595.json");
@@ -908,11 +935,11 @@ mod tests {
             .with_body(response)
             .create();
 
-        assert_eq!(client.get_post(8595), Ok(expected));
+        assert_eq!(block_on(client.get_post(8595)), Ok(expected));
     }
 
-    #[test]
-    fn post_format_from_json() {
+    #[tokio::test]
+    async fn post_format_from_json() {
         assert_eq!(
             PostFormat::try_from(&JsonValue::String(String::from("jpg"))),
             Ok(PostFormat::JPG)
@@ -946,8 +973,8 @@ mod tests {
         assert_eq!(PostFormat::try_from(&JsonValue::Null), Err(()));
     }
 
-    #[test]
-    fn post_rating_from_json() {
+    #[tokio::test]
+    async fn post_rating_from_json() {
         assert_eq!(
             PostRating::try_from(&JsonValue::String(String::from("s"))),
             Ok(PostRating::Safe)
@@ -971,8 +998,8 @@ mod tests {
         assert_eq!(PostRating::try_from(&JsonValue::Null), Err(()));
     }
 
-    #[test]
-    fn post_status_from_json() {
+    #[tokio::test]
+    async fn post_status_from_json() {
         assert_eq!(
             PostStatus::try_from((&JsonValue::String(String::from("active")), None)),
             Ok(PostStatus::Active)
@@ -1006,8 +1033,8 @@ mod tests {
         assert_eq!(PostStatus::try_from((&JsonValue::Null, None)), Err(()));
     }
 
-    #[test]
-    fn post_from_json_basic() {
+    #[tokio::test]
+    async fn post_from_json_basic() {
         let example_json = include_str!("mocked/id_8595.json");
 
         let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
@@ -1131,8 +1158,8 @@ mod tests {
         assert_eq!(post.preview_height, Some(115));
     }
 
-    #[test]
-    fn post_default() {
+    #[tokio::test]
+    async fn post_default() {
         assert_eq!(
             Post::default(),
             Post {
@@ -1179,8 +1206,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn post_format_to_string() {
+    #[tokio::test]
+    async fn post_format_to_string() {
         assert_eq!(PostFormat::JPG.to_string(), "JPG");
         assert_eq!(PostFormat::PNG.to_string(), "PNG");
         assert_eq!(PostFormat::GIF.to_string(), "GIF");
@@ -1188,25 +1215,25 @@ mod tests {
         assert_eq!(PostFormat::WEBM.to_string(), "WEBM");
     }
 
-    #[test]
-    fn post_rating_to_string() {
+    #[tokio::test]
+    async fn post_rating_to_string() {
         assert_eq!(PostRating::Safe.to_string(), "safe");
         assert_eq!(PostRating::Questionable.to_string(), "questionable");
         assert_eq!(PostRating::Explicit.to_string(), "explicit");
     }
 
-    #[test]
-    fn post_status_is_deleted() {
+    #[tokio::test]
+    async fn post_status_is_deleted() {
         assert!(PostStatus::Deleted(String::from("foo")).is_deleted());
     }
 
-    #[test]
-    fn post_status_is_not_deleted() {
+    #[tokio::test]
+    async fn post_status_is_not_deleted() {
         assert!(!PostStatus::Active.is_deleted());
     }
 
-    #[test]
-    fn post_is_deleted() {
+    #[tokio::test]
+    async fn post_is_deleted() {
         let post = Post {
             status: PostStatus::Deleted(String::from("foo")),
             ..Default::default()
@@ -1215,8 +1242,8 @@ mod tests {
         assert!(post.is_deleted());
     }
 
-    #[test]
-    fn post_is_not_deleted() {
+    #[tokio::test]
+    async fn post_is_not_deleted() {
         let post = Post {
             status: PostStatus::Active,
             ..Default::default()

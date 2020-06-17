@@ -19,6 +19,7 @@ custom_error! { #[doc = "Enum for `rs621` errors."] #[derive(PartialEq)] pub Err
                 200 => String::from(" OK: Request was successful"),
                 403 => String::from(" Forbidden: Access denied. May indicate that your request lacks a User-Agent header."),
                 404 => String::from(" Not Found"),
+                412 => String::from(" Precondition failed"),
                 420 => String::from(" Invalid Record: Record could not be saved"),
                 421 => String::from(" User Throttled: User is throttled, try again later"),
                 422 => String::from(" Locked: The resource is locked and cannot be modified"),
