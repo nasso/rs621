@@ -6,7 +6,6 @@ use super::{
 use chrono::{offset::Utc, DateTime, TimeZone};
 use futures::{
     prelude::*,
-    stream::Stream,
     task::{Context, Poll},
 };
 use serde_json::Value as JsonValue;
@@ -50,8 +49,8 @@ impl<'a> PostStream<'a> {
     fn new<T: Into<Query>>(client: &'a Client, query: Option<T>, start_id: Option<u64>) -> Self {
         PostStream {
             client: client,
-
             query: query.map(T::into),
+
             query_url: None,
             query_future: None,
 
@@ -67,80 +66,102 @@ impl<'a> Stream for PostStream<'a> {
     type Item = Rs621Result<Post>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Rs621Result<Post>>> {
+        enum QueryPollRes {
+            Pending,
+            Err(crate::error::Error),
+            NotFetching,
+        }
+
         let this = self.get_mut();
 
-        if let Some(ref mut fut) = this.query_future {
-            match fut.as_mut().poll(cx) {
-                Poll::Ready(Ok(body)) => {
-                    // put everything in the chunk
-                    this.chunk = body
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .rev()
-                        .map(Post::try_from)
-                        .collect()
-                }
+        loop {
+            // poll the pending query future if there's any
+            let query_status = if let Some(ref mut fut) = this.query_future {
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(res) => {
+                        // the future is finished, drop it
+                        this.query_future = None;
 
-                // if something goes wrong, make the chunk be a single Err, and end the iterator
-                Poll::Ready(Err(e)) => {
-                    this.ended = true;
-                    this.chunk = vec![Err(e)]
-                }
+                        match res {
+                            Ok(body) => {
+                                // put everything in the chunk
+                                this.chunk = body
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .rev()
+                                    .map(Post::try_from)
+                                    .collect();
 
-                Poll::Pending => {
-                    return Poll::Pending;
-                }
-            }
-        }
+                                // mark the stream as ended if there was no posts
+                                this.ended = this.chunk.is_empty();
+                                QueryPollRes::NotFetching
+                            }
 
-        // check if we need to load a new chunk of results
-        if this.chunk.is_empty() {
-            let url = format!(
-                "/post/index.json?limit={}{}{}",
-                ITER_CHUNK_SIZE,
-                if let Some(Query { ordered: true, .. }) = this.query {
-                    this.page += 1;
-                    format!("&page={}", this.page)
-                } else {
-                    match this.last_id {
-                        Some(i) => format!("&before_id={}", i),
-                        None => String::new(),
+                            // if there was an error, stream it and mark the stream as ended
+                            Err(e) => {
+                                this.ended = true;
+                                QueryPollRes::Err(e)
+                            }
+                        }
                     }
-                },
-                match &this.query {
-                    Some(q) => format!("&tags={}", q.str_url),
-                    None => String::new(),
+
+                    Poll::Pending => QueryPollRes::Pending,
                 }
-            );
-            this.query_url = Some(url);
+            } else {
+                QueryPollRes::NotFetching
+            };
 
-            // get the JSON
-            this.query_future = Some(Box::pin(
-                this.client
-                    .get_json_endpoint(this.query_url.as_ref().unwrap()),
-            ));
-        }
+            match query_status {
+                QueryPollRes::Err(e) => return Poll::Ready(Some(Err(e))),
+                QueryPollRes::Pending => return Poll::Pending,
+                QueryPollRes::NotFetching if this.ended => {
+                    // the stream ended because:
+                    // 1. there was an error
+                    // 2. there's simply no more elements
+                    return Poll::Ready(None);
+                }
+                QueryPollRes::NotFetching if !this.chunk.is_empty() => {
+                    // get a post
+                    let post = this.chunk.pop().unwrap();
 
-        // it's over if the chunk is still empty
-        this.ended |= this.chunk.is_empty();
+                    // if there's an actual post, then it's the new last_id
+                    if let Ok(ref p) = post {
+                        this.last_id = Some(p.id);
+                    }
 
-        Poll::Ready(if !this.ended {
-            // get a post
-            let post = this.chunk.pop().unwrap();
+                    // stream the post
+                    return Poll::Ready(Some(post));
+                }
+                QueryPollRes::NotFetching => {
+                    // we need to load a new chunk of posts
+                    let url = format!(
+                        "/posts.json?limit={}{}{}",
+                        ITER_CHUNK_SIZE,
+                        if let Some(Query { ordered: true, .. }) = this.query {
+                            this.page += 1;
+                            format!("&page={}", this.page)
+                        } else {
+                            match this.last_id {
+                                Some(i) => format!("&page=b{}", i),
+                                None => String::new(),
+                            }
+                        },
+                        match &this.query {
+                            Some(q) => format!("&tags={}", q.str_url),
+                            None => String::new(),
+                        }
+                    );
+                    this.query_url = Some(url);
 
-            // if there's an actual post, then it's the new last_id
-            if let Ok(ref p) = post {
-                this.last_id = Some(p.id);
+                    // get the JSON
+                    this.query_future = Some(Box::pin(
+                        this.client
+                            .get_json_endpoint(this.query_url.as_ref().unwrap()),
+                    ));
+                }
             }
-
-            // give them the post because we're nice
-            Some(post)
-        } else {
-            // pops any eventual error
-            // Vec::pop returns None if the Vec is empty anyway
-            this.chunk.pop()
-        })
+        }
     }
 }
 

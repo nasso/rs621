@@ -5,28 +5,36 @@ use super::{
     utils::{get_json_api_time, get_json_value_as},
 };
 use chrono::{offset::Utc, DateTime};
-use futures::executor::block_on;
+use futures::{
+    prelude::*,
+    task::{Context, Poll},
+};
 use serde_json::Value as JsonValue;
-use std::convert::TryFrom;
+use std::{convert::TryFrom, pin::Pin};
 
 /// An iterator over [`PoolListEntry`]s.
 ///
 /// [`PoolListEntry`]: struct.PoolListEntry.html
-#[derive(Debug)]
-pub struct PoolIter<'a> {
+pub struct PoolStream<'a> {
     client: &'a Client,
     query: Option<String>,
+
+    query_url: Option<String>,
+    query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
 
     page: u64,
     chunk: Vec<Rs621Result<PoolListEntry>>,
     ended: bool,
 }
 
-impl PoolIter<'_> {
-    fn new<'a>(client: &'a Client, query: Option<&str>) -> PoolIter<'a> {
-        PoolIter {
+impl<'a> PoolStream<'a> {
+    fn new(client: &'a Client, query: Option<&str>) -> Self {
+        PoolStream {
             client,
             query: query.map(urlencoding::encode),
+
+            query_url: None,
+            query_future: None,
 
             page: 1,
             chunk: Vec::new(),
@@ -35,57 +43,86 @@ impl PoolIter<'_> {
     }
 }
 
-impl Iterator for PoolIter<'_> {
+impl Stream for PoolStream<'_> {
     type Item = Rs621Result<PoolListEntry>;
 
-    fn next(&mut self) -> Option<Rs621Result<PoolListEntry>> {
-        // check if we need to load a new chunk of results
-        if self.chunk.is_empty() {
-            // get the JSON
-            match block_on(self.client.get_json_endpoint(&format!(
-                "/pool/index.json?page={}{}",
-                {
-                    let page = self.page;
-                    self.page += 1;
-                    page
-                },
-                match &self.query {
-                    None => String::new(),
-                    Some(title) => format!("&query={}", title),
-                }
-            ))) {
-                Ok(body) => {
-                    // put everything in the chunk
-                    self.chunk = body
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .rev()
-                        .map(|v| PoolListEntry::try_from(v))
-                        .collect()
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Rs621Result<PoolListEntry>>> {
+        let this = self.get_mut();
+
+        // poll the pending query future if there's any
+        if let Some(ref mut fut) = this.query_future {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(res) => {
+                    // the future is finished, drop it
+                    this.query_future = None;
+
+                    match res {
+                        Ok(body) => {
+                            // put everything in the chunk
+                            this.chunk = body
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .rev()
+                                .map(|v| PoolListEntry::try_from(v))
+                                .collect();
+
+                            // mark the stream as ended if there was no posts
+                            this.ended = this.chunk.is_empty();
+                        }
+
+                        // if there was an error, stream it and mark the stream as ended
+                        Err(e) => {
+                            this.ended = true;
+                            return Poll::Ready(Some(Err(e)));
+                        }
+                    }
                 }
 
-                // if something goes wrong, make the chunk be a single Err, and end the iterator
-                Err(e) => {
-                    self.ended = true;
-                    self.chunk = vec![Err(e)]
+                Poll::Pending => {
+                    return Poll::Pending;
                 }
             }
         }
 
-        // it's over if the chunk is still empty
-        self.ended |= self.chunk.is_empty();
+        if this.ended {
+            // the stream ended because:
+            // 1. there was an error
+            // 2. there's simply no more posts
+            Poll::Ready(None)
+        } else if this.chunk.is_empty() {
+            // we need to load a new chunk of posts
+            let url = format!(
+                "/pool/index.json?page={}{}",
+                {
+                    let page = this.page;
+                    this.page += 1;
+                    page
+                },
+                match &this.query {
+                    None => String::new(),
+                    Some(title) => format!("&query={}", title),
+                }
+            );
+            this.query_url = Some(url);
 
-        if !self.ended {
-            // get a pool
-            let pool = self.chunk.pop().unwrap();
+            // get the JSON
+            this.query_future = Some(Box::pin(
+                this.client
+                    .get_json_endpoint(this.query_url.as_ref().unwrap()),
+            ));
 
-            // return the pool
-            Some(pool)
+            // the stream is immediately pending for the new future
+            Poll::Pending
         } else {
-            // pop any eventual error
-            // Vec::pop returns None if the Vec is empty anyway
-            self.chunk.pop()
+            // get a post
+            let post = this.chunk.pop().unwrap();
+
+            // stream the post
+            Poll::Ready(Some(post))
         }
     }
 }
@@ -252,8 +289,8 @@ impl Client {
     ///
     /// [`Pool`]: ../pool/struct.Pool.html
     /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
-    pub fn pool_list<'a>(&'a self) -> PoolIter<'a> {
-        PoolIter::new(self, None)
+    pub fn pool_list<'a>(&'a self) -> PoolStream<'a> {
+        PoolStream::new(self, None)
     }
 
     /// Search all the pools in the website and returns an iterator over the results.
@@ -278,8 +315,8 @@ impl Client {
     ///
     /// [`Pool`]: ../pool/struct.Pool.html
     /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
-    pub fn pool_search<'a>(&'a self, query: &str) -> PoolIter<'a> {
-        PoolIter::new(self, Some(query))
+    pub fn pool_search<'a>(&'a self, query: &str) -> PoolStream<'a> {
+        PoolStream::new(self, Some(query))
     }
 }
 

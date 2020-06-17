@@ -21,7 +21,10 @@ custom_error = "1.7.1"
 urlencoding = "1.0.0"
 chrono = "0.4.11"
 serde_json = "1.0.55"
-futures = "0.3"
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
 
 [dependencies.reqwest]
 version = "0.10.6"

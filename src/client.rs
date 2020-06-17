@@ -42,13 +42,10 @@ impl Client {
         })
     }
 
-    pub(crate) fn get_json_endpoint(
+    pub fn get_json_endpoint(
         &self,
         endpoint: &str,
     ) -> impl Future<Output = Result<serde_json::Value>> {
-        // Wait first to make sure we're not exceeding the limit
-        ::std::thread::sleep(REQ_COOLDOWN_DURATION);
-
         let request = self
             .client
             .get(&format!("{}{}", self.url, endpoint))
@@ -56,6 +53,9 @@ impl Client {
             .send();
 
         async move {
+            // Wait first to make sure we're not exceeding the limit
+            std::thread::sleep(REQ_COOLDOWN_DURATION);
+
             match request.await {
                 Ok(res) => {
                     if res.status().is_success() {
