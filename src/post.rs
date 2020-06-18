@@ -4,6 +4,7 @@ use super::{
     utils::{get_json_api_time, get_json_value_as},
 };
 use chrono::{offset::Utc, DateTime, TimeZone};
+use derivative::Derivative;
 use futures::{
     prelude::*,
     task::{Context, Poll},
@@ -32,11 +33,15 @@ impl From<&[&str]> for Query {
 }
 
 /// Iterator returning posts from a search query.
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct PostStream<'a> {
     client: &'a Client,
     query: Option<Query>,
 
     query_url: Option<String>,
+
+    #[derivative(Debug = "ignore")]
     query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
 
     last_id: Option<u64>,
@@ -136,14 +141,14 @@ impl<'a> Stream for PostStream<'a> {
                 QueryPollRes::NotFetching => {
                     // we need to load a new chunk of posts
                     let url = format!(
-                        "/posts.json?limit={}{}{}",
+                        "/post/index.json?limit={}{}{}",
                         ITER_CHUNK_SIZE,
                         if let Some(Query { ordered: true, .. }) = this.query {
                             this.page += 1;
                             format!("&page={}", this.page)
                         } else {
                             match this.last_id {
-                                Some(i) => format!("&page=b{}", i),
+                                Some(i) => format!("&before_id={}", i),
                                 None => String::new(),
                             }
                         },
@@ -679,7 +684,8 @@ mod tests {
             client
                 .post_search(&["fluffy", "rating:s", "order:score"][..])
                 .take(100)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
+                .await,
             serde_json::from_str::<JsonValue>(include_str!(
                 "mocked/320_page-1_fluffy_rating-s_order-score.json"
             ))
@@ -728,7 +734,8 @@ mod tests {
             client
                 .post_search(&["fluffy", "rating:s", "order:score"][..])
                 .take(400)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
+                .await,
             serde_json::from_str::<JsonValue>(PAGES[0])
                 .unwrap()
                 .as_array()
@@ -749,7 +756,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_before_id() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_before-1869409_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -775,14 +782,15 @@ mod tests {
             client
                 .post_search_before(&["fluffy", "rating:s"][..], 1869409)
                 .take(80)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
+                .await,
             expected
         );
     }
 
     #[tokio::test]
     async fn search_above_limit() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -820,14 +828,15 @@ mod tests {
             client
                 .post_search(&["fluffy", "rating:s"][..])
                 .take(400)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
+                .await,
             expected
         );
     }
 
     #[tokio::test]
     async fn list_above_limit() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/400_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -858,12 +867,15 @@ mod tests {
             .create(),
         ];
 
-        assert_eq!(client.post_list().take(400).collect::<Vec<_>>(), expected);
+        assert_eq!(
+            client.post_list().take(400).collect::<Vec<_>>().await,
+            expected
+        );
     }
 
     #[tokio::test]
     async fn search_no_result() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = "[]";
         let expected = Vec::new();
@@ -882,14 +894,15 @@ mod tests {
             client
                 .post_search(&["fluffy", "rating:s"][..])
                 .take(5)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
+                .await,
             expected
         );
     }
 
     #[tokio::test]
     async fn search_simple() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -915,14 +928,15 @@ mod tests {
             client
                 .post_search(&["fluffy", "rating:s"][..])
                 .take(5)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>()
+                .await,
             expected
         );
     }
 
     #[tokio::test]
     async fn list_simple() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/320_fluffy_rating-s.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -941,12 +955,15 @@ mod tests {
         .with_body(response)
         .create();
 
-        assert_eq!(client.post_list().take(5).collect::<Vec<_>>(), expected);
+        assert_eq!(
+            client.post_list().take(5).collect::<Vec<_>>().await,
+            expected
+        );
     }
 
     #[tokio::test]
     async fn get_post_by_id() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let response = include_str!("mocked/id_8595.json");
         let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
@@ -956,7 +973,7 @@ mod tests {
             .with_body(response)
             .create();
 
-        assert_eq!(block_on(client.get_post(8595)), Ok(expected));
+        assert_eq!(client.get_post(8595).await, Ok(expected));
     }
 
     #[tokio::test]

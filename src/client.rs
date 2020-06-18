@@ -87,7 +87,6 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::executor::block_on;
     use mockito::mock;
 
     #[tokio::test]
@@ -100,7 +99,7 @@ mod tests {
             .create();
 
         assert_eq!(
-            block_on(client.get_json_endpoint("/post/show.json?id=8595")),
+            client.get_json_endpoint("/post/show.json?id=8595").await,
             Err(crate::error::Error::Http {
                 code: 500,
                 reason: Some(String::from("foo"))
@@ -117,7 +116,7 @@ mod tests {
             .create();
 
         assert_eq!(
-            block_on(client.get_json_endpoint("/post/show.json?id=8595")),
+            client.get_json_endpoint("/post/show.json?id=8595").await,
             Ok({
                 let mut m = serde_json::Map::new();
                 m.insert(String::from("dummy"), "json".into());

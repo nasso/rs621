@@ -1,25 +1,31 @@
-use super::{
-    client::Client,
-    error::Result as Rs621Result,
-    post::Post,
-    utils::{get_json_api_time, get_json_value_as},
+use {
+    super::{
+        client::Client,
+        error::Result as Rs621Result,
+        post::Post,
+        utils::{get_json_api_time, get_json_value_as},
+    },
+    chrono::{offset::Utc, DateTime},
+    derivative::Derivative,
+    futures::{
+        prelude::*,
+        task::{Context, Poll},
+    },
+    serde_json::Value as JsonValue,
+    std::{convert::TryFrom, pin::Pin},
 };
-use chrono::{offset::Utc, DateTime};
-use futures::{
-    prelude::*,
-    task::{Context, Poll},
-};
-use serde_json::Value as JsonValue;
-use std::{convert::TryFrom, pin::Pin};
 
 /// An iterator over [`PoolListEntry`]s.
 ///
 /// [`PoolListEntry`]: struct.PoolListEntry.html
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct PoolStream<'a> {
     client: &'a Client,
     query: Option<String>,
 
     query_url: Option<String>,
+    #[derivative(Debug = "ignore")]
     query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
 
     page: u64,
@@ -43,86 +49,98 @@ impl<'a> PoolStream<'a> {
     }
 }
 
-impl Stream for PoolStream<'_> {
+impl<'a> Stream for PoolStream<'a> {
     type Item = Rs621Result<PoolListEntry>;
 
     fn poll_next(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Rs621Result<PoolListEntry>>> {
-        let this = self.get_mut();
-
-        // poll the pending query future if there's any
-        if let Some(ref mut fut) = this.query_future {
-            match fut.as_mut().poll(cx) {
-                Poll::Ready(res) => {
-                    // the future is finished, drop it
-                    this.query_future = None;
-
-                    match res {
-                        Ok(body) => {
-                            // put everything in the chunk
-                            this.chunk = body
-                                .as_array()
-                                .unwrap()
-                                .iter()
-                                .rev()
-                                .map(|v| PoolListEntry::try_from(v))
-                                .collect();
-
-                            // mark the stream as ended if there was no posts
-                            this.ended = this.chunk.is_empty();
-                        }
-
-                        // if there was an error, stream it and mark the stream as ended
-                        Err(e) => {
-                            this.ended = true;
-                            return Poll::Ready(Some(Err(e)));
-                        }
-                    }
-                }
-
-                Poll::Pending => {
-                    return Poll::Pending;
-                }
-            }
+        enum QueryPollRes {
+            Pending,
+            Err(crate::error::Error),
+            NotFetching,
         }
 
-        if this.ended {
-            // the stream ended because:
-            // 1. there was an error
-            // 2. there's simply no more posts
-            Poll::Ready(None)
-        } else if this.chunk.is_empty() {
-            // we need to load a new chunk of posts
-            let url = format!(
-                "/pool/index.json?page={}{}",
-                {
-                    let page = this.page;
-                    this.page += 1;
-                    page
-                },
-                match &this.query {
-                    None => String::new(),
-                    Some(title) => format!("&query={}", title),
+        let this = self.get_mut();
+
+        loop {
+            // poll the pending query future if there's any
+            let query_status = if let Some(ref mut fut) = this.query_future {
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(res) => {
+                        // the future is finished, drop it
+                        this.query_future = None;
+
+                        match res {
+                            Ok(body) => {
+                                // put everything in the chunk
+                                this.chunk = body
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .rev()
+                                    .map(PoolListEntry::try_from)
+                                    .collect();
+
+                                // mark the stream as ended if there was no posts
+                                this.ended = this.chunk.is_empty();
+                                QueryPollRes::NotFetching
+                            }
+
+                            // if there was an error, stream it and mark the stream as ended
+                            Err(e) => {
+                                this.ended = true;
+                                QueryPollRes::Err(e)
+                            }
+                        }
+                    }
+
+                    Poll::Pending => QueryPollRes::Pending,
                 }
-            );
-            this.query_url = Some(url);
+            } else {
+                QueryPollRes::NotFetching
+            };
 
-            // get the JSON
-            this.query_future = Some(Box::pin(
-                this.client
-                    .get_json_endpoint(this.query_url.as_ref().unwrap()),
-            ));
+            match query_status {
+                QueryPollRes::Err(e) => return Poll::Ready(Some(Err(e))),
+                QueryPollRes::Pending => return Poll::Pending,
+                QueryPollRes::NotFetching if this.ended => {
+                    // the stream ended because:
+                    // 1. there was an error
+                    // 2. there's simply no more elements
+                    return Poll::Ready(None);
+                }
+                QueryPollRes::NotFetching if !this.chunk.is_empty() => {
+                    // get a post
+                    let pool = this.chunk.pop().unwrap();
 
-            // the stream is immediately pending for the new future
-            Poll::Pending
-        } else {
-            // get a post
-            let post = this.chunk.pop().unwrap();
+                    // stream the post
+                    return Poll::Ready(Some(pool));
+                }
+                QueryPollRes::NotFetching => {
+                    // we need to load a new chunk of posts
+                    let url = format!(
+                        "/pool/index.json?page={}{}",
+                        {
+                            let page = this.page;
+                            this.page += 1;
+                            page
+                        },
+                        match &this.query {
+                            None => String::new(),
+                            Some(title) => format!("&query={}", title),
+                        }
+                    );
+                    this.query_url = Some(url);
 
-            // stream the post
-            Poll::Ready(Some(post))
+                    // get the JSON
+                    this.query_future = Some(Box::pin(
+                        this.client
+                            .get_json_endpoint(this.query_url.as_ref().unwrap()),
+                    ));
+                }
+            }
         }
     }
 }
@@ -362,7 +380,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_pool() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let _m = mock("GET", "/pool/show.json?id=18274")
             .with_body(include_str!("mocked/pool_18274.json"))
@@ -374,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_list() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let _m = [
             mock("GET", "/pool/index.json?page=1")
@@ -389,7 +407,7 @@ mod tests {
                 .create(),
         ];
 
-        let pools: Vec<_> = client.pool_list().collect();
+        let pools: Vec<_> = client.pool_list().collect().await;
 
         // We know how many pools we have because we've mocked the requests. Hah!
         assert_eq!(pools.len(), 6);
@@ -397,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_search() {
-        let client = Client::new(b"rs621/unit_test").unwrap();
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
         let _m = [
             mock("GET", "/pool/index.json?page=1&query=foo")
@@ -410,7 +428,9 @@ mod tests {
         ];
 
         // Should all contain foo in the name
-        for pool in client.pool_search("foo") {
+        let mut search = client.pool_search("foo");
+
+        while let Some(pool) = search.next().await {
             assert!(pool.unwrap().name.contains("foo"));
         }
     }

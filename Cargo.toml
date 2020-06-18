@@ -21,6 +21,7 @@ custom_error = "1.7.1"
 urlencoding = "1.0.0"
 chrono = "0.4.11"
 serde_json = "1.0.55"
+derivative = "2.1.1"
 
 [dependencies.futures]
 version = "0.3"
