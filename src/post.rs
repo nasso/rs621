@@ -1,19 +1,245 @@
-use super::{
-    client::Client,
-    error::Result as Rs621Result,
-    utils::{get_json_api_time, get_json_value_as},
+use {
+    super::{client::Client, error::Result as Rs621Result},
+    chrono::{offset::Utc, DateTime},
+    derivative::Derivative,
+    futures::{
+        prelude::*,
+        task::{Context, Poll},
+    },
+    serde::{
+        de::{self, MapAccess, Visitor},
+        Deserialize, Deserializer,
+    },
+    std::pin::Pin,
 };
-use chrono::{offset::Utc, DateTime, TimeZone};
-use derivative::Derivative;
-use futures::{
-    prelude::*,
-    task::{Context, Poll},
-};
-use serde_json::Value as JsonValue;
-use std::{convert::TryFrom, fmt, pin::Pin};
 
 /// Chunk size used for iterators performing requests
 const ITER_CHUNK_SIZE: u64 = 320;
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub enum PostFileExtension {
+    #[serde(rename = "jpg")]
+    Jpeg,
+    #[serde(rename = "png")]
+    Png,
+    #[serde(rename = "gif")]
+    Gif,
+    #[serde(rename = "swf")]
+    Swf,
+    #[serde(rename = "webm")]
+    WebM,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostFile {
+    pub width: u64,
+    pub height: u64,
+    pub ext: PostFileExtension,
+    pub size: u64,
+    pub md5: String,
+    pub url: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostPreview {
+    pub width: u64,
+    pub height: u64,
+    pub url: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostSample {
+    pub width: u64,
+    pub height: u64,
+    pub url: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostScore {
+    pub up: i64,
+    pub down: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostTags {
+    pub general: Vec<String>,
+    pub species: Vec<String>,
+    pub character: Vec<String>,
+    pub artist: Vec<String>,
+    pub invalid: Vec<String>,
+    pub lore: Vec<String>,
+    pub meta: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostFlags {
+    #[serde(deserialize_with = "nullable_bool_from_json")]
+    pub pending: bool,
+    #[serde(deserialize_with = "nullable_bool_from_json")]
+    pub flagged: bool,
+    #[serde(deserialize_with = "nullable_bool_from_json")]
+    pub note_locked: bool,
+    #[serde(deserialize_with = "nullable_bool_from_json")]
+    pub status_locked: bool,
+    #[serde(deserialize_with = "nullable_bool_from_json")]
+    pub rating_locked: bool,
+    #[serde(deserialize_with = "nullable_bool_from_json")]
+    pub deleted: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub enum PostRating {
+    #[serde(rename = "s")]
+    Safe,
+    #[serde(rename = "q")]
+    Questionable,
+    #[serde(rename = "e")]
+    Explicit,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostRelationships {
+    pub parent_id: Option<u64>,
+    pub has_children: bool,
+    pub has_active_children: bool,
+    pub children: Vec<u64>,
+}
+
+/// Structure representing a post.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct Post {
+    pub id: u64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub file: PostFile,
+    pub preview: PostPreview,
+    #[serde(deserialize_with = "PostSample::from_json")]
+    pub sample: Option<PostSample>,
+    pub score: PostScore,
+    pub tags: PostTags,
+    pub locked_tags: Vec<String>,
+    pub change_seq: u64,
+    pub flags: PostFlags,
+    pub rating: PostRating,
+    pub fav_count: u64,
+    pub sources: Vec<String>,
+    pub pools: Vec<u64>,
+    pub relationships: PostRelationships,
+    pub approver_id: Option<u64>,
+    pub uploader_id: u64,
+    pub description: String,
+    pub comment_count: u64,
+    pub is_favorited: bool,
+}
+
+fn nullable_bool_from_json<'de, D>(de: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct NullableBoolVisitor;
+
+    impl<'de> Visitor<'de> for NullableBoolVisitor {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("null or bool")
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<bool, E> {
+            Ok(v)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<bool, E> {
+            Ok(false)
+        }
+    }
+
+    de.deserialize_any(NullableBoolVisitor)
+}
+
+impl PostSample {
+    fn from_json<'de, D>(de: D) -> Result<Option<PostSample>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Has,
+            Width,
+            Height,
+            Url,
+        }
+
+        struct PostSampleVisitor;
+
+        impl<'de> Visitor<'de> for PostSampleVisitor {
+            type Value = Option<PostSample>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct PostSample")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Option<PostSample>, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut has = None;
+                let mut width = None;
+                let mut height = None;
+                let mut url = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Has => {
+                            if has.is_some() {
+                                return Err(de::Error::duplicate_field("has"));
+                            }
+
+                            has = Some(map.next_value()?);
+                        }
+                        Field::Width => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("width"));
+                            }
+
+                            width = Some(map.next_value()?);
+                        }
+                        Field::Height => {
+                            if height.is_some() {
+                                return Err(de::Error::duplicate_field("height"));
+                            }
+
+                            height = Some(map.next_value()?);
+                        }
+                        Field::Url => {
+                            if url.is_some() {
+                                return Err(de::Error::duplicate_field("url"));
+                            }
+
+                            url = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let has = has.ok_or_else(|| de::Error::missing_field("has"))?;
+                let width = width.ok_or_else(|| de::Error::missing_field("width"))?;
+                let height = height.ok_or_else(|| de::Error::missing_field("height"))?;
+                let url = url.ok_or_else(|| de::Error::missing_field("url"))?;
+
+                if let Some(true) = has {
+                    Ok(None)
+                } else {
+                    Ok(Some(PostSample { width, height, url }))
+                }
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &["has", "width", "height", "url"];
+        de.deserialize_struct("PostSample", FIELDS, PostSampleVisitor)
+    }
+}
 
 /// A search query. Contains information about the tags used and an URL encoded version of the tags.
 #[derive(Debug, PartialEq, Clone)]
@@ -88,15 +314,16 @@ impl<'a> Stream for PostStream<'a> {
                         this.query_future = None;
 
                         match res {
-                            Ok(body) => {
+                            Ok(mut body) => {
                                 // put everything in the chunk
-                                this.chunk = body
-                                    .as_array()
-                                    .unwrap()
-                                    .iter()
-                                    .rev()
-                                    .map(Post::try_from)
-                                    .collect();
+                                this.chunk =
+                                    match serde_json::from_value::<Vec<Post>>(body["posts"].take())
+                                    {
+                                        Ok(vec) => {
+                                            vec.into_iter().rev().map(|post| Ok(post)).collect()
+                                        }
+                                        Err(e) => vec![Err(e.into())],
+                                    };
 
                                 // mark the stream as ended if there was no posts
                                 this.ended = this.chunk.is_empty();
@@ -141,14 +368,14 @@ impl<'a> Stream for PostStream<'a> {
                 QueryPollRes::NotFetching => {
                     // we need to load a new chunk of posts
                     let url = format!(
-                        "/post/index.json?limit={}{}{}",
+                        "/posts.json?limit={}{}{}",
                         ITER_CHUNK_SIZE,
                         if let Some(Query { ordered: true, .. }) = this.query {
                             this.page += 1;
                             format!("&page={}", this.page)
                         } else {
                             match this.last_id {
-                                Some(i) => format!("&before_id={}", i),
+                                Some(i) => format!("&page=b{}", i),
                                 None => String::new(),
                             }
                         },
@@ -167,372 +394,6 @@ impl<'a> Stream for PostStream<'a> {
                 }
             }
         }
-    }
-}
-
-/// Post status.
-#[derive(Debug, PartialEq, Eq)]
-pub enum PostStatus {
-    Active,
-    Flagged,
-    Pending,
-    /// The `String` is the reason the post was deleted.
-    Deleted(String),
-}
-
-impl PostStatus {
-    /// Returns `true` if this `PostStatus` matches `PostStatus::Deleted(_)`.
-    pub fn is_deleted(&self) -> bool {
-        match self {
-            PostStatus::Deleted(_) => true,
-            _ => false,
-        }
-    }
-}
-
-impl TryFrom<(&str, Option<&str>)> for PostStatus {
-    type Error = ();
-
-    fn try_from(v: (&str, Option<&str>)) -> Result<PostStatus, ()> {
-        match v.0 {
-            "active" => Ok(PostStatus::Active),
-            "flagged" => Ok(PostStatus::Flagged),
-            "pending" => Ok(PostStatus::Pending),
-            "deleted" => Ok(PostStatus::Deleted(
-                v.1.map(String::from).unwrap_or_else(String::new),
-            )),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<(&JsonValue, Option<&str>)> for PostStatus {
-    type Error = ();
-
-    fn try_from(v: (&JsonValue, Option<&str>)) -> Result<PostStatus, ()> {
-        match v.0.as_str() {
-            Some(s) => PostStatus::try_from((s, v.1)),
-            None => Err(()),
-        }
-    }
-}
-
-impl Default for PostStatus {
-    fn default() -> PostStatus {
-        PostStatus::Pending
-    }
-}
-
-/// Post rating.
-#[derive(Debug, PartialEq, Eq)]
-pub enum PostRating {
-    /// Safe For Work
-    Safe,
-    /// Wouldn't Recommend For Work
-    Questionable,
-    /// Not Safe For Work
-    Explicit,
-}
-
-impl Default for PostRating {
-    fn default() -> PostRating {
-        // A default value doesn't make much sense here
-        PostRating::Explicit
-    }
-}
-
-impl TryFrom<&str> for PostRating {
-    type Error = ();
-
-    fn try_from(v: &str) -> Result<PostRating, ()> {
-        match v {
-            "s" => Ok(PostRating::Safe),
-            "q" => Ok(PostRating::Questionable),
-            "e" => Ok(PostRating::Explicit),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<&JsonValue> for PostRating {
-    type Error = ();
-
-    fn try_from(v: &JsonValue) -> Result<PostRating, ()> {
-        match v.as_str() {
-            Some(s) => PostRating::try_from(s),
-            None => Err(()),
-        }
-    }
-}
-
-impl fmt::Display for PostRating {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            PostRating::Explicit => write!(f, "explicit"),
-            PostRating::Questionable => write!(f, "questionable"),
-            PostRating::Safe => write!(f, "safe"),
-        }
-    }
-}
-
-/// Post file formats/extensions.
-#[derive(Debug, PartialEq, Eq)]
-pub enum PostFormat {
-    /// Joint Photographic Experts Group image file format.
-    JPG,
-    /// Portable Network Graphics image file format.
-    PNG,
-    /// Graphics Interchange Format image file format (possibly animated).
-    GIF,
-    /// ShockWave Flash file format.
-    SWF,
-    /// WebM video file format.
-    WEBM,
-}
-
-impl TryFrom<&str> for PostFormat {
-    type Error = ();
-
-    fn try_from(v: &str) -> Result<PostFormat, ()> {
-        match v {
-            "jpg" => Ok(PostFormat::JPG),
-            "png" => Ok(PostFormat::PNG),
-            "gif" => Ok(PostFormat::GIF),
-            "swf" => Ok(PostFormat::SWF),
-            "webm" => Ok(PostFormat::WEBM),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<&JsonValue> for PostFormat {
-    type Error = ();
-
-    fn try_from(v: &JsonValue) -> Result<PostFormat, ()> {
-        match v.as_str() {
-            Some(s) => PostFormat::try_from(s),
-            None => Err(()),
-        }
-    }
-}
-
-impl fmt::Display for PostFormat {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            PostFormat::JPG => write!(f, "JPG"),
-            PostFormat::PNG => write!(f, "PNG"),
-            PostFormat::GIF => write!(f, "GIF"),
-            PostFormat::SWF => write!(f, "SWF"),
-            PostFormat::WEBM => write!(f, "WEBM"),
-        }
-    }
-}
-
-/// Structure representing a post.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Post {
-    /// The raw JSON description of the post (from the API).
-    pub raw: String,
-
-    /// The ID of the post.
-    pub id: u64,
-    /// The post's MD5 hash. Unavailable for deleted posts.
-    pub md5: Option<String>,
-    /// The status of the post.
-    pub status: PostStatus,
-
-    /// Username of the user who uploaded the post.
-    pub author: String,
-    /// User ID of the user who uploaded the post. `None` if unknown.
-    pub creator_id: Option<u64>,
-    /// When the post was uploaded.
-    pub created_at: DateTime<Utc>,
-
-    /// A list of the post's artist tag(s).
-    pub artists: Vec<String>,
-    /// The post's tags.
-    pub tags: Vec<String>,
-    /// The post's rating.
-    pub rating: PostRating,
-    /// The post's description.
-    pub description: String,
-
-    /// If the post has a parent, the ID of the parent post. `None` if the post has no parent.
-    pub parent_id: Option<u64>,
-    /// A list of post IDs of this post's children.
-    pub children: Vec<u64>,
-    /// A list of the post's sources.
-    pub sources: Vec<String>,
-
-    /// If the post has any notes.
-    pub has_notes: bool,
-    /// If the post has any comments.
-    pub has_comments: bool,
-
-    /// The number of users who have the post in their favorites.
-    pub fav_count: u64,
-    /// The post's score.
-    pub score: i64,
-
-    /// Absolute URL to the filename. Unavailable for deleted posts.
-    pub file_url: Option<String>,
-    /// The post's extension. Unavailable for deleted posts.
-    pub file_ext: Option<PostFormat>,
-    /// Size (in bytes) of the post. Unavailable for deleted posts.
-    pub file_size: Option<u64>,
-
-    /// Width of the image.
-    pub width: u64,
-    /// Height of the image.
-    pub height: u64,
-
-    /// Absolute URL of the sample (scaled) filename. Unavailable for deleted posts.
-    pub sample_url: Option<String>,
-    /// Width of the sample (scaled) image. Unavailable for deleted posts.
-    pub sample_width: Option<u64>,
-    /// Height of the sample (scaled) image. Unavailable for deleted posts.
-    pub sample_height: Option<u64>,
-
-    /// Absolute URL of the preview (thumbnail) filename. Unavailable for deleted posts.
-    pub preview_url: Option<String>,
-    /// Width of the preview (thumbnail) image. Unavailable for deleted posts.
-    pub preview_width: Option<u64>,
-    /// Height of the preview (thumbnail) image. Unavailable for deleted posts.
-    pub preview_height: Option<u64>,
-}
-
-impl Post {
-    /// Returns `true` if this post is deleted. Equivalent to calling [`PostStatus::is_deleted()`]
-    /// on this post's [`status`].
-    ///
-    /// [`PostStatus::is_deleted()`]: enum.PostStatus.html#method.is_deleted
-    /// [`status`]: #structfield.status
-    pub fn is_deleted(&self) -> bool {
-        self.status.is_deleted()
-    }
-}
-
-impl Default for Post {
-    fn default() -> Post {
-        Post {
-            raw: Default::default(),
-
-            id: Default::default(),
-            md5: Default::default(),
-            status: Default::default(),
-
-            author: Default::default(),
-            creator_id: Default::default(),
-            created_at: Utc.timestamp(0, 0), // here is the bad boy
-
-            artists: Default::default(),
-            tags: Default::default(),
-            rating: Default::default(),
-            description: Default::default(),
-
-            parent_id: Default::default(),
-            children: Default::default(),
-            sources: Default::default(),
-
-            has_notes: Default::default(),
-            has_comments: Default::default(),
-
-            fav_count: Default::default(),
-            score: Default::default(),
-
-            file_url: Default::default(),
-            file_ext: Default::default(),
-            file_size: Default::default(),
-
-            width: Default::default(),
-            height: Default::default(),
-
-            sample_url: Default::default(),
-            sample_width: Default::default(),
-            sample_height: Default::default(),
-
-            preview_url: Default::default(),
-            preview_width: Default::default(),
-            preview_height: Default::default(),
-        }
-    }
-}
-
-impl TryFrom<&JsonValue> for Post {
-    type Error = super::error::Error;
-
-    fn try_from(v: &JsonValue) -> Rs621Result<Self> {
-        Ok(Post {
-            raw: v.to_string(),
-
-            id: get_json_value_as(&v, "id", JsonValue::as_u64)?,
-            md5: v["md5"].as_str().map(String::from),
-            status: get_json_value_as(&v, "status", |v| {
-                // we need to give a tuple to try_from to give it the delreason if there's any
-                PostStatus::try_from((v, v["delreason"].as_str())).ok()
-            })?,
-
-            author: get_json_value_as(&v, "author", JsonValue::as_str)?.to_string(),
-            creator_id: v["creator_id"].as_u64(),
-            created_at: get_json_api_time(&v, "created_at")?,
-
-            artists: get_json_value_as(&v, "artist", JsonValue::as_array)?
-                .iter()
-                .map(|v| v.as_str().unwrap().to_string())
-                .collect(),
-
-            tags: get_json_value_as(&v, "tags", JsonValue::as_str)?
-                .split_whitespace()
-                .map(String::from)
-                .collect(),
-
-            rating: get_json_value_as(&v, "rating", |v| PostRating::try_from(v).ok())?,
-
-            description: get_json_value_as(&v, "description", JsonValue::as_str)?.to_string(),
-
-            parent_id: v["parent_id"].as_u64(),
-            children: v["children"].as_str().map_or_else(Vec::new, |c| {
-                if c.is_empty() {
-                    Vec::new()
-                } else {
-                    c.split(',').map(|id| id.parse().unwrap()).collect()
-                }
-            }),
-
-            sources: v["sources"].as_array().map_or_else(Vec::new, |v| {
-                v.iter().map(|v| v.as_str().unwrap().to_string()).collect()
-            }),
-
-            has_notes: get_json_value_as(&v, "has_notes", JsonValue::as_bool)?,
-            has_comments: get_json_value_as(&v, "has_comments", JsonValue::as_bool)?,
-
-            fav_count: get_json_value_as(&v, "fav_count", JsonValue::as_u64)?,
-            score: get_json_value_as(&v, "score", JsonValue::as_i64)?,
-
-            file_url: match v["status"].as_str() {
-                Some("deleted") => None,
-                _ => Some(get_json_value_as(&v, "file_url", JsonValue::as_str)?.to_string()),
-            },
-            file_ext: v["file_ext"]
-                .as_str()
-                .map(PostFormat::try_from)
-                .map(Result::unwrap),
-            file_size: v["file_size"].as_u64(),
-
-            width: get_json_value_as(&v, "width", JsonValue::as_u64)?,
-            height: get_json_value_as(&v, "height", JsonValue::as_u64)?,
-
-            sample_url: v["sample_url"].as_str().map(String::from),
-            sample_width: v["sample_width"].as_u64(),
-            sample_height: v["sample_height"].as_u64(),
-
-            preview_url: match v["status"].as_str() {
-                Some("deleted") => None,
-                _ => Some(get_json_value_as(&v, "preview_url", JsonValue::as_str)?.to_string()),
-            },
-            preview_width: v["preview_width"].as_u64(),
-            preview_height: v["preview_height"].as_u64(),
-        })
     }
 }
 
@@ -556,7 +417,7 @@ impl Client {
             .get_json_endpoint(&format!("/post/show.json?id={}", id))
             .await?;
 
-        Post::try_from(&body)
+        Ok(serde_json::from_value(body)?)
     }
 
     /// Returns an iterator over all the posts on the website.

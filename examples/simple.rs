@@ -13,7 +13,7 @@ async fn main() -> rs621::error::Result<()> {
 
     while let Some(post) = result_stream.next().await {
         match post {
-            Ok(post) => println!("- #{} with a score of {}", post.id, post.score),
+            Ok(post) => println!("- #{} with a score of {}", post.id, post.score.total),
             Err(e) => println!("- couldn't load post: {}", e),
         }
     }

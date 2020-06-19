@@ -5,9 +5,9 @@ use custom_error::custom_error;
 /// Result type for `rs621`, using [`rs621::error::Error`].
 ///
 /// [`rs621::error::Error`]: enum.Error.html
-pub type Result<T> = ::std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
-custom_error! { #[doc = "Enum for `rs621` errors."] #[derive(PartialEq)] pub Error
+custom_error! { #[derive(PartialEq)] pub Error
     AboveLimit{option: String, val: u64, max: u64} =
         "{option}:{val} is above the maximum value allowed in this context ({max})",
 
@@ -39,8 +39,7 @@ custom_error! { #[doc = "Enum for `rs621` errors."] #[derive(PartialEq)] pub Err
 
     Serial{desc: String} = "Serialization error: {desc}",
 
-    Deserialization{key: String, value: String} =
-        "Invalid JSON value for \"{key}\": {value}",
+    Deserialization{desc: String} = "Deserialization error: {desc}",
 
     CannotSendRequest{desc: String} = "Couldn't send request: {desc}",
 
@@ -53,6 +52,14 @@ impl From<InvalidHeaderValue> for Error {
     fn from(e: InvalidHeaderValue) -> Error {
         Error::InvalidHeaderValue {
             desc: format!("Invalid header value: {}", e),
+        }
+    }
+}
+
+impl From<serde_json::error::Error> for Error {
+    fn from(e: serde_json::error::Error) -> Error {
+        Error::Deserialization {
+            desc: format!("{:#?}", e),
         }
     }
 }
