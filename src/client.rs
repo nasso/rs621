@@ -1,6 +1,9 @@
-use super::error::{Error, Result};
-use futures::prelude::*;
-use reqwest::header::{HeaderMap, HeaderValue};
+use {
+    super::error::{Error, Result},
+    futures::prelude::*,
+    reqwest::header::{HeaderMap, HeaderValue},
+    std::sync::{Arc, Mutex},
+};
 
 /// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
 /// so the lowest safe value we can have here is 500 ms.
@@ -25,6 +28,7 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
 /// Client struct.
 #[derive(Debug)]
 pub struct Client {
+    mutex: Arc<Mutex<()>>,
     url: String,
     pub(crate) client: reqwest::Client,
     headers: HeaderMap,
@@ -36,6 +40,7 @@ impl Client {
     /// the name of your project.
     pub fn new(url: &str, user_agent: impl AsRef<[u8]>) -> Result<Self> {
         Ok(Client {
+            mutex: Arc::new(Mutex::new(())),
             url: url.to_string(),
             client: reqwest::Client::new(),
             headers: create_header_map(user_agent)?,
@@ -49,9 +54,16 @@ impl Client {
         let url = format!("{}{}", self.url, endpoint);
         let request = self.client.get(&url).headers(self.headers.clone()).send();
 
+        let c_mutex = self.mutex.clone();
+
         async move {
-            // Wait first to make sure we're not exceeding the limit
-            std::thread::sleep(REQ_COOLDOWN_DURATION);
+            {
+                // we must lock the mutex when sleeping, just in case other stuff is going on in other threads
+                let _lock = c_mutex.lock().unwrap();
+
+                // wait first to make sure we're not exceeding the limit
+                std::thread::sleep(REQ_COOLDOWN_DURATION);
+            }
 
             match request.await {
                 Ok(res) => {
