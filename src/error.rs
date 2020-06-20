@@ -11,8 +11,8 @@ custom_error! { #[derive(PartialEq)] pub Error
     AboveLimit{option: String, val: u64, max: u64} =
         "{option}:{val} is above the maximum value allowed in this context ({max})",
 
-    Http{code: u16, reason: Option<String>} = @{
-        format!("HTTP error {}{}", code, match reason {
+    Http{url: String, code: u16, reason: Option<String>} = @{
+        format!("HTTP error on URL \"{}\": {}{}", url, code, match reason {
             Some(reason) => format!(": {}", reason),
             // Give em a generic reason
             None => match code {
@@ -46,6 +46,8 @@ custom_error! { #[derive(PartialEq)] pub Error
     CannotCreateClient{desc: String} = "Couldn't create client: {desc}",
 
     InvalidHeaderValue{desc: String} = "Invalid header value",
+
+    PostNotFound{id: u64} = "Post #{id} not found",
 }
 
 impl From<InvalidHeaderValue> for Error {

@@ -9,6 +9,7 @@ readme = "README.md"
 keywords = ["e621", "e926", "furry", "api", "client"]
 categories = ["api-bindings"]
 license = "MIT OR Apache-2.0"
+exclude = ["src/mocked"]
 
 [badges]
 travis-ci = { repository = "nasso/rs621" }
@@ -17,24 +18,25 @@ codecov = { repository = "nasso/rs621" }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-custom_error = "1.7.1"
-urlencoding = "1.0.0"
+custom_error = "1.7"
+urlencoding = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features= ["derive"] }
-serde_json = "1.0.55"
-derivative = "2.1.1"
+serde_json = "1.0"
+derivative = "2.1"
+itertools = "0.9"
 
 [dependencies.futures]
 version = "0.3"
 default-features = false
 
 [dependencies.reqwest]
-version = "0.10.6"
+version = "0.10"
 features = ["json"]
 
 [dev-dependencies]
-mockito = "0.23.3"
+mockito = "0.23"
 
 [dev-dependencies.tokio]
-version = "0.2.21"
+version = "0.2"
 features = ["rt-threaded", "macros"]

@@ -6,11 +6,12 @@ use {
         prelude::*,
         task::{Context, Poll},
     },
+    itertools::Itertools,
     serde::{
         de::{self, MapAccess, Visitor},
         Deserialize, Deserializer,
     },
-    std::pin::Pin,
+    std::{borrow::Borrow, pin::Pin},
 };
 
 /// Chunk size used for iterators performing requests
@@ -133,6 +134,16 @@ pub struct Post {
     pub is_favorited: bool,
 }
 
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+struct PostListApiResponse {
+    pub posts: Vec<Post>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+struct PostShowApiResponse {
+    pub post: Post,
+}
+
 fn nullable_bool_from_json<'de, D>(de: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
@@ -244,56 +255,68 @@ impl PostSample {
 /// A search query. Contains information about the tags used and an URL encoded version of the tags.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Query {
-    str_url: String,
+    url_encoded_tags: String,
     ordered: bool,
 }
 
-impl From<&[&str]> for Query {
-    fn from(q: &[&str]) -> Self {
-        let query_str = q.join(" ");
-        let str_url = urlencoding::encode(&query_str);
-        let ordered = q.iter().any(|t| t.starts_with("order:"));
+impl<T> From<&[T]> for Query
+where
+    T: AsRef<str>,
+{
+    fn from(q: &[T]) -> Self {
+        let tags: Vec<&str> = q.iter().map(|t| t.as_ref()).collect();
+        let query_str = tags.join("+");
+        let url_encoded_tags = urlencoding::encode(&query_str);
+        let ordered = tags.iter().any(|t| t.starts_with("order:"));
 
-        Query { str_url, ordered }
+        Query {
+            url_encoded_tags,
+            ordered,
+        }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchPage {
+    Page(u64),
+    BeforePost(u64),
+    AfterPost(u64),
 }
 
 /// Iterator returning posts from a search query.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct PostStream<'a> {
+pub struct PostSearchStream<'a> {
     client: &'a Client,
-    query: Option<Query>,
+    query: Query,
 
     query_url: Option<String>,
 
     #[derivative(Debug = "ignore")]
     query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
 
-    last_id: Option<u64>,
-    page: u64,
+    next_page: SearchPage,
     chunk: Vec<Rs621Result<Post>>,
     ended: bool,
 }
 
-impl<'a> PostStream<'a> {
-    fn new<T: Into<Query>>(client: &'a Client, query: Option<T>, start_id: Option<u64>) -> Self {
-        PostStream {
+impl<'a> PostSearchStream<'a> {
+    fn new<T: Into<Query>>(client: &'a Client, query: T, page: SearchPage) -> Self {
+        PostSearchStream {
             client: client,
-            query: query.map(T::into),
+            query: query.into(),
 
             query_url: None,
             query_future: None,
 
-            last_id: start_id,
-            page: 0,
+            next_page: page,
             chunk: Vec::new(),
             ended: false,
         }
     }
 }
 
-impl<'a> Stream for PostStream<'a> {
+impl<'a> Stream for PostSearchStream<'a> {
     type Item = Rs621Result<Post>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Rs621Result<Post>>> {
@@ -314,16 +337,38 @@ impl<'a> Stream for PostStream<'a> {
                         this.query_future = None;
 
                         match res {
-                            Ok(mut body) => {
+                            Ok(body) => {
                                 // put everything in the chunk
                                 this.chunk =
-                                    match serde_json::from_value::<Vec<Post>>(body["posts"].take())
-                                    {
-                                        Ok(vec) => {
-                                            vec.into_iter().rev().map(|post| Ok(post)).collect()
-                                        }
+                                    match serde_json::from_value::<PostListApiResponse>(body) {
+                                        Ok(res) => res
+                                            .posts
+                                            .into_iter()
+                                            .rev()
+                                            .map(|post| Ok(post))
+                                            .collect(),
                                         Err(e) => vec![Err(e.into())],
                                     };
+
+                                let last_id = match this.chunk.first() {
+                                    Some(Ok(post)) => post.id,
+                                    _ => 0,
+                                };
+
+                                // we can know what will be the next page
+                                this.next_page = match this.query.ordered {
+                                    true => match this.next_page {
+                                        SearchPage::Page(i) => SearchPage::Page(i + 1),
+                                        _ => SearchPage::Page(1),
+                                    },
+                                    false => match this.next_page {
+                                        SearchPage::Page(_) => SearchPage::BeforePost(last_id),
+                                        SearchPage::BeforePost(_) => {
+                                            SearchPage::BeforePost(last_id)
+                                        }
+                                        SearchPage::AfterPost(_) => SearchPage::AfterPost(last_id),
+                                    },
+                                };
 
                                 // mark the stream as ended if there was no posts
                                 this.ended = this.chunk.is_empty();
@@ -357,32 +402,20 @@ impl<'a> Stream for PostStream<'a> {
                     // get a post
                     let post = this.chunk.pop().unwrap();
 
-                    // if there's an actual post, then it's the new last_id
-                    if let Ok(ref p) = post {
-                        this.last_id = Some(p.id);
-                    }
-
                     // stream the post
                     return Poll::Ready(Some(post));
                 }
                 QueryPollRes::NotFetching => {
                     // we need to load a new chunk of posts
                     let url = format!(
-                        "/posts.json?limit={}{}{}",
+                        "/posts.json?limit={}&page={}&tags={}",
                         ITER_CHUNK_SIZE,
-                        if let Some(Query { ordered: true, .. }) = this.query {
-                            this.page += 1;
-                            format!("&page={}", this.page)
-                        } else {
-                            match this.last_id {
-                                Some(i) => format!("&page=b{}", i),
-                                None => String::new(),
-                            }
+                        match this.next_page {
+                            SearchPage::Page(i) => format!("{}", i),
+                            SearchPage::BeforePost(i) => format!("b{}", i),
+                            SearchPage::AfterPost(i) => format!("a{}", i),
                         },
-                        match &this.query {
-                            Some(q) => format!("&tags={}", q.str_url),
-                            None => String::new(),
-                        }
+                        this.query.url_encoded_tags
                     );
                     this.query_url = Some(url);
 
@@ -397,124 +430,225 @@ impl<'a> Stream for PostStream<'a> {
     }
 }
 
-impl Client {
-    /// Returns the post with the given ID.
-    ///
-    /// ```no_run
-    /// # use rs621::client::Client;
-    /// # fn main() -> rs621::error::Result<()> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let post = client.get_post(8595)?;
-    ///
-    /// assert_eq!(post.id, 8595);
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    pub async fn get_post(&self, id: u64) -> Rs621Result<Post> {
-        let body = self
-            .get_json_endpoint(&format!("/post/show.json?id={}", id))
-            .await?;
+/// Iterator returning posts from a search query.
+#[derive(Derivative)]
+#[derivative(Debug)]
+pub struct PostStream<'a, I, T>
+where
+    T: Borrow<u64> + Unpin,
+    I: Iterator<Item = T> + Unpin,
+{
+    client: &'a Client,
+    ids: I,
 
-        Ok(serde_json::from_value(body)?)
+    query_url: Option<String>,
+
+    #[derivative(Debug = "ignore")]
+    query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
+
+    chunk: Vec<Rs621Result<Post>>,
+}
+
+impl<'a, I, T> PostStream<'a, I, T>
+where
+    T: Borrow<u64> + Unpin,
+    I: Iterator<Item = T> + Unpin,
+{
+    fn new(client: &'a Client, ids: I) -> Self {
+        PostStream {
+            client,
+            ids,
+            query_url: None,
+            query_future: None,
+            chunk: Vec::new(),
+        }
     }
+}
 
-    /// Returns an iterator over all the posts on the website.
+impl<'a, I, T> Stream for PostStream<'a, I, T>
+where
+    T: Borrow<u64> + Unpin,
+    I: Iterator<Item = T> + Unpin,
+{
+    type Item = Rs621Result<Post>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Rs621Result<Post>>> {
+        enum QueryPollRes {
+            Pending,
+            Err(crate::error::Error),
+            NotFetching,
+        }
+
+        let this = self.get_mut();
+
+        loop {
+            // poll the pending query future if there's any
+            let query_status = if let Some(ref mut fut) = this.query_future {
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(res) => {
+                        // the future is finished, drop it
+                        this.query_future = None;
+
+                        match res {
+                            Ok(body) => {
+                                // put everything in the chunk
+                                this.chunk =
+                                    match serde_json::from_value::<PostListApiResponse>(body) {
+                                        Ok(res) => res
+                                            .posts
+                                            .into_iter()
+                                            .rev()
+                                            .map(|post| Ok(post))
+                                            .collect(),
+                                        Err(e) => vec![Err(e.into())],
+                                    };
+
+                                QueryPollRes::NotFetching
+                            }
+
+                            // if there was an error, stream it
+                            Err(e) => QueryPollRes::Err(e),
+                        }
+                    }
+
+                    Poll::Pending => QueryPollRes::Pending,
+                }
+            } else {
+                QueryPollRes::NotFetching
+            };
+
+            match query_status {
+                QueryPollRes::Err(e) => return Poll::Ready(Some(Err(e))),
+                QueryPollRes::Pending => return Poll::Pending,
+                QueryPollRes::NotFetching if !this.chunk.is_empty() => {
+                    // get a post
+                    let post = this.chunk.pop().unwrap();
+
+                    // stream the post
+                    return Poll::Ready(Some(post));
+                }
+                QueryPollRes::NotFetching => {
+                    // we need to load a new chunk of posts
+                    let id_list = this.ids.by_ref().take(100).map(|x| *x.borrow()).join(",");
+
+                    if id_list.is_empty() {
+                        // the stream ended
+                        return Poll::Ready(None);
+                    }
+
+                    let url = format!("/posts.json?tags=id%3A{}", id_list);
+                    this.query_url = Some(url);
+
+                    // get the JSON
+                    this.query_future = Some(Box::pin(
+                        this.client
+                            .get_json_endpoint(this.query_url.as_ref().unwrap()),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+impl Client {
+    /// Returns posts with the given IDs. Note that the order is NOT preserved!
     ///
     /// ```no_run
     /// # use rs621::client::Client;
-    /// # fn main() -> Result<(), rs621::error::Error> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// use futures::prelude::*;
     ///
-    /// for post in client
-    ///     .post_list()
-    ///     .take(3)
-    /// {
-    ///     assert!(post?.id != 0);
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    /// let mut post_stream = client.get_posts(&[8595, 535, 2105, 1470]);
+    ///
+    /// while let Some(post) = post_stream.next().await {
+    ///     println!("Post #{}", post?.id);
     /// }
     /// # Ok(()) }
     /// ```
-    ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    pub fn post_list<'a>(&'a self) -> PostStream<'a> {
-        PostStream::new::<Query>(self, None, None)
+    pub fn get_posts<'a, I, J, T>(&'a self, ids: I) -> PostStream<'a, J, T>
+    where
+        T: Borrow<u64> + Unpin,
+        J: Iterator<Item = T> + Unpin,
+        I: IntoIterator<Item = T, IntoIter = J> + Unpin,
+    {
+        PostStream::new(self, ids.into_iter())
     }
 
-    /// Returns an iterator over all the posts matching the given tags.
+    /// Returns a Stream over all the posts matching the search query.
     ///
     /// ```no_run
-    /// # use rs621::client::Client;
-    /// # use rs621::post::PostRating;
-    /// # fn main() -> Result<(), rs621::error::Error> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// # use rs621::{client::Client, post::PostRating};
+    /// use futures::prelude::*;
     ///
-    /// for post in client
-    ///     .post_search(&["fluffy", "rating:s"][..])
-    ///     .take(3)
-    /// {
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    ///
+    /// let mut post_stream = client.post_search(&["fluffy", "rating:s"][..]).take(3);
+    ///
+    /// while let Some(post) = post_stream.next().await {
     ///     assert_eq!(post?.rating, PostRating::Safe);
     /// }
     /// # Ok(()) }
     /// ```
-    ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostStream<'a> {
-        PostStream::new(self, Some(tags), None)
+    pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostSearchStream<'a> {
+        self.post_search_from_page(tags, SearchPage::Page(1))
     }
 
-    /// Returns an iterator over all the posts with an ID smaller than `before_id`.
+    /// Same as [`Client::post_search`], but starting from a specific result page.
     ///
     /// ```no_run
-    /// # use rs621::client::Client;
-    /// # fn main() -> Result<(), rs621::error::Error> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// # use rs621::{client::Client, post::{PostRating, SearchPage}};
+    /// use futures::prelude::*;
     ///
-    /// for post in client
-    ///     .post_list_before(123456)
-    ///     .take(5)
-    /// {
-    ///     assert!(post?.id < 123456);
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    ///
+    /// let mut post_stream = client
+    ///     .post_search_from_page(&["fluffy", "rating:s"][..], SearchPage::Page(4))
+    ///     .take(5);
+    ///
+    /// while let Some(post) = post_stream.next().await {
+    ///     let post = post?;
+    ///
+    ///     assert_eq!(post.rating, PostRating::Safe);
     /// }
     /// # Ok(()) }
     /// ```
     ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    pub fn post_list_before<'a>(&'a self, before_id: u64) -> PostStream<'a> {
-        PostStream::new::<Query>(self, None, Some(before_id))
-    }
 
-    /// Returns an iterator over all the posts matching the tags and with an ID smaller than
-    /// `before_id`.
+    /// Returns a Stream over all the posts matching the search query, starting from the given page.
     ///
     /// ```no_run
-    /// # use rs621::client::Client;
-    /// # use rs621::post::PostRating;
-    /// # fn main() -> Result<(), rs621::error::Error> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
+    /// # use {
+    /// #     rs621::{client::Client, post::PostRating},
+    /// #     futures::prelude::*,
+    /// # };
+    /// use rs621::post::SearchPage;
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
     ///
-    /// for post in client
-    ///     .post_search_before(&["fluffy", "rating:s"][..], 123456)
-    ///     .take(5)
-    /// {
+    /// let mut post_stream = client
+    ///     .post_search_from_page(&["fluffy", "rating:s"][..], SearchPage::BeforePost(123456))
+    ///     .take(3);
+    ///
+    /// while let Some(post) = post_stream.next().await {
     ///     let post = post?;
     ///     assert!(post.id < 123456);
     ///     assert_eq!(post.rating, PostRating::Safe);
     /// }
     /// # Ok(()) }
     /// ```
-    ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    pub fn post_search_before<'a, T: Into<Query>>(
+    pub fn post_search_from_page<'a, T: Into<Query>>(
         &'a self,
         tags: T,
-        before_id: u64,
-    ) -> PostStream<'a> {
-        PostStream::new(self, Some(tags), Some(before_id))
+        page: SearchPage,
+    ) -> PostSearchStream<'a> {
+        PostSearchStream::new(self, tags, page)
     }
 }
 
@@ -527,13 +661,13 @@ mod tests {
     async fn search_ordered() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
+        let query = Query::from(&["fluffy", "rating:s", "order:score"][..]);
 
         let _m = mock(
             "GET",
             Matcher::Exact(format!(
-                "/post/index.json?limit={}&page=1&tags={}",
-                ITER_CHUNK_SIZE, REQ_TAGS
+                "/posts.json?limit={}&page=1&tags={}",
+                ITER_CHUNK_SIZE, query.url_encoded_tags
             )),
         )
         .with_body(include_str!(
@@ -543,19 +677,18 @@ mod tests {
 
         assert_eq!(
             client
-                .post_search(&["fluffy", "rating:s", "order:score"][..])
+                .post_search(query)
                 .take(100)
                 .collect::<Vec<_>>()
                 .await,
-            serde_json::from_str::<JsonValue>(include_str!(
+            serde_json::from_str::<PostListApiResponse>(include_str!(
                 "mocked/320_page-1_fluffy_rating-s_order-score.json"
             ))
             .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
+            .posts
+            .into_iter()
             .take(100)
-            .map(Post::try_from)
+            .map(|x| Ok(x))
             .collect::<Vec<_>>()
         );
     }
@@ -564,7 +697,7 @@ mod tests {
     async fn search_above_limit_ordered() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        const REQ_TAGS: &str = "fluffy%20rating%3As%20order%3Ascore";
+        let query = Query::from(&["fluffy", "rating:s", "order:score"][..]);
         const PAGES: [&str; 2] = [
             include_str!("mocked/320_page-1_fluffy_rating-s_order-score.json"),
             include_str!("mocked/320_page-2_fluffy_rating-s_order-score.json"),
@@ -574,8 +707,8 @@ mod tests {
             mock(
                 "GET",
                 Matcher::Exact(format!(
-                    "/post/index.json?limit={}&page=1&tags={}",
-                    ITER_CHUNK_SIZE, REQ_TAGS
+                    "/posts.json?limit={}&page=1&tags={}",
+                    ITER_CHUNK_SIZE, query.url_encoded_tags
                 )),
             )
             .with_body(PAGES[0])
@@ -583,8 +716,8 @@ mod tests {
             mock(
                 "GET",
                 Matcher::Exact(format!(
-                    "/post/index.json?limit={}&page=2&tags={}",
-                    ITER_CHUNK_SIZE, REQ_TAGS
+                    "/posts.json?limit={}&page=2&tags={}",
+                    ITER_CHUNK_SIZE, query.url_encoded_tags
                 )),
             )
             .with_body(PAGES[1])
@@ -593,24 +726,22 @@ mod tests {
 
         assert_eq!(
             client
-                .post_search(&["fluffy", "rating:s", "order:score"][..])
+                .post_search(query)
                 .take(400)
                 .collect::<Vec<_>>()
                 .await,
-            serde_json::from_str::<JsonValue>(PAGES[0])
+            serde_json::from_str::<PostListApiResponse>(PAGES[0])
                 .unwrap()
-                .as_array()
-                .unwrap()
-                .iter()
+                .posts
+                .into_iter()
                 .chain(
-                    serde_json::from_str::<JsonValue>(PAGES[1])
+                    serde_json::from_str::<PostListApiResponse>(PAGES[1])
                         .unwrap()
-                        .as_array()
-                        .unwrap()
-                        .iter()
+                        .posts
+                        .into_iter()
                 )
                 .take(400)
-                .map(Post::try_from)
+                .map(|x| Ok(x))
                 .collect::<Vec<_>>()
         );
     }
@@ -619,29 +750,24 @@ mod tests {
     async fn search_before_id() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        let response = include_str!("mocked/320_before-1869409_fluffy_rating-s.json");
-        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
-        let expected: Vec<_> = response_json
-            .as_array()
-            .unwrap()
-            .iter()
-            .take(80)
-            .map(Post::try_from)
-            .collect();
+        let query = Query::from(&["fluffy", "rating:s"][..]);
+        let response_json = include_str!("mocked/320_fluffy_rating-s_before-2269211.json");
+        let response: PostListApiResponse = serde_json::from_str(response_json).unwrap();
+        let expected: Vec<_> = response.posts.into_iter().take(80).map(|x| Ok(x)).collect();
 
         let _m = mock(
             "GET",
             Matcher::Exact(format!(
-                "/post/index.json?limit={}&before_id=1869409&tags=fluffy%20rating%3As",
-                ITER_CHUNK_SIZE
+                "/posts.json?limit={}&page=b2269211&tags={}",
+                ITER_CHUNK_SIZE, query.url_encoded_tags
             )),
         )
-        .with_body(response)
+        .with_body(response_json)
         .create();
 
         assert_eq!(
             client
-                .post_search_before(&["fluffy", "rating:s"][..], 1869409)
+                .post_search_from_page(query, SearchPage::BeforePost(2269211))
                 .take(80)
                 .collect::<Vec<_>>()
                 .await,
@@ -653,41 +779,49 @@ mod tests {
     async fn search_above_limit() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        let response = include_str!("mocked/400_fluffy_rating-s.json");
-        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
-        let expected: Vec<_> = response_json
-            .as_array()
+        let query = Query::from(&["fluffy", "rating:s"][..]);
+        let responses_json: [&str; 2] = [
+            include_str!("mocked/320_fluffy_rating-s.json"),
+            include_str!("mocked/320_fluffy_rating-s_before-2269211.json"),
+        ];
+        let mut responses: [Option<PostListApiResponse>; 2] = [
+            Some(serde_json::from_str(responses_json[0]).unwrap()),
+            Some(serde_json::from_str(responses_json[1]).unwrap()),
+        ];
+        let expected: Vec<_> = responses[0]
+            .take()
             .unwrap()
-            .iter()
-            .map(Post::try_from)
+            .posts
+            .into_iter()
+            .chain(responses[1].take().unwrap().posts.into_iter())
+            .take(400)
+            .map(|x| Ok(x))
             .collect();
 
         let _m = [
             mock(
                 "GET",
                 Matcher::Exact(format!(
-                    "/post/index.json?limit={}&tags=fluffy%20rating%3As",
-                    ITER_CHUNK_SIZE
+                    "/posts.json?limit={}&page=1&tags={}",
+                    ITER_CHUNK_SIZE, query.url_encoded_tags
                 )),
             )
-            .with_body(include_str!("mocked/320_fluffy_rating-s.json"))
+            .with_body(responses_json[0])
             .create(),
             mock(
                 "GET",
                 Matcher::Exact(format!(
-                    "/post/index.json?limit={}&before_id=1869409&tags={}",
-                    ITER_CHUNK_SIZE, "fluffy%20rating%3As"
+                    "/posts.json?limit={}&page=b2269211&tags={}",
+                    ITER_CHUNK_SIZE, query.url_encoded_tags
                 )),
             )
-            .with_body(include_str!(
-                "mocked/320_before-1869409_fluffy_rating-s.json"
-            ))
+            .with_body(responses_json[1])
             .create(),
         ];
 
         assert_eq!(
             client
-                .post_search(&["fluffy", "rating:s"][..])
+                .post_search(query)
                 .take(400)
                 .collect::<Vec<_>>()
                 .await,
@@ -696,68 +830,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_above_limit() {
-        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
-
-        let response = include_str!("mocked/400_fluffy_rating-s.json");
-        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
-        let expected: Vec<_> = response_json
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(Post::try_from)
-            .collect();
-
-        let _m = [
-            mock(
-                "GET",
-                Matcher::Exact(format!("/post/index.json?limit={}", ITER_CHUNK_SIZE)),
-            )
-            .with_body(include_str!("mocked/320_fluffy_rating-s.json"))
-            .create(),
-            mock(
-                "GET",
-                Matcher::Exact(format!(
-                    "/post/index.json?limit={}&before_id=1869409",
-                    ITER_CHUNK_SIZE,
-                )),
-            )
-            .with_body(include_str!(
-                "mocked/320_before-1869409_fluffy_rating-s.json"
-            ))
-            .create(),
-        ];
-
-        assert_eq!(
-            client.post_list().take(400).collect::<Vec<_>>().await,
-            expected
-        );
-    }
-
-    #[tokio::test]
     async fn search_no_result() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        let response = "[]";
-        let expected = Vec::new();
+        let query = Query::from(&["fluffy", "rating:s"][..]);
+        let response = "{\"posts\":[]}";
 
         let _m = mock(
             "GET",
             Matcher::Exact(format!(
-                "/post/index.json?limit={}&tags=fluffy%20rating%3As",
-                ITER_CHUNK_SIZE
+                "/posts.json?limit={}&page=1&tags={}",
+                ITER_CHUNK_SIZE, query.url_encoded_tags
             )),
         )
         .with_body(response)
         .create();
 
         assert_eq!(
-            client
-                .post_search(&["fluffy", "rating:s"][..])
-                .take(5)
-                .collect::<Vec<_>>()
-                .await,
-            expected
+            client.post_search(query).take(5).collect::<Vec<_>>().await,
+            vec![]
         );
     }
 
@@ -765,389 +856,45 @@ mod tests {
     async fn search_simple() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        let response = include_str!("mocked/320_fluffy_rating-s.json");
-        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
-        let expected: Vec<_> = response_json
-            .as_array()
-            .unwrap()
-            .iter()
-            .take(5)
-            .map(Post::try_from)
-            .collect();
+        let query = Query::from(&["fluffy", "rating:s"][..]);
+        let response_json = include_str!("mocked/320_fluffy_rating-s.json");
+        let response: PostListApiResponse = serde_json::from_str(response_json).unwrap();
+        let expected: Vec<_> = response.posts.into_iter().take(5).map(|x| Ok(x)).collect();
 
         let _m = mock(
             "GET",
             Matcher::Exact(format!(
-                "/post/index.json?limit={}&tags=fluffy%20rating%3As",
-                ITER_CHUNK_SIZE
+                "/posts.json?limit={}&page=1&tags={}",
+                ITER_CHUNK_SIZE, query.url_encoded_tags
             )),
         )
-        .with_body(response)
+        .with_body(response_json)
         .create();
+
+        assert_eq!(
+            client.post_search(query).take(5).collect::<Vec<_>>().await,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn get_posts_by_id() {
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+
+        let response_json = include_str!("mocked/id_8595_535_2105_1470.json");
+        let response: PostListApiResponse = serde_json::from_str(response_json).unwrap();
+        let expected = response.posts;
+
+        let _m = mock("GET", "/posts.json?tags=id%3A8595,535,2105,1470")
+            .with_body(response_json)
+            .create();
 
         assert_eq!(
             client
-                .post_search(&["fluffy", "rating:s"][..])
-                .take(5)
+                .get_posts(&[8595, 535, 2105, 1470])
                 .collect::<Vec<_>>()
                 .await,
-            expected
+            expected.into_iter().map(|p| Ok(p)).collect::<Vec<_>>(),
         );
-    }
-
-    #[tokio::test]
-    async fn list_simple() {
-        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
-
-        let response = include_str!("mocked/320_fluffy_rating-s.json");
-        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
-        let expected: Vec<_> = response_json
-            .as_array()
-            .unwrap()
-            .iter()
-            .take(5)
-            .map(Post::try_from)
-            .collect();
-
-        let _m = mock(
-            "GET",
-            Matcher::Exact(format!("/post/index.json?limit={}", ITER_CHUNK_SIZE)),
-        )
-        .with_body(response)
-        .create();
-
-        assert_eq!(
-            client.post_list().take(5).collect::<Vec<_>>().await,
-            expected
-        );
-    }
-
-    #[tokio::test]
-    async fn get_post_by_id() {
-        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
-
-        let response = include_str!("mocked/id_8595.json");
-        let response_json = serde_json::from_str::<JsonValue>(response).unwrap();
-        let expected = Post::try_from(&response_json).unwrap();
-
-        let _m = mock("GET", "/post/show.json?id=8595")
-            .with_body(response)
-            .create();
-
-        assert_eq!(client.get_post(8595).await, Ok(expected));
-    }
-
-    #[tokio::test]
-    async fn post_format_from_json() {
-        assert_eq!(
-            PostFormat::try_from(&JsonValue::String(String::from("jpg"))),
-            Ok(PostFormat::JPG)
-        );
-
-        assert_eq!(
-            PostFormat::try_from(&JsonValue::String(String::from("png"))),
-            Ok(PostFormat::PNG)
-        );
-
-        assert_eq!(
-            PostFormat::try_from(&JsonValue::String(String::from("gif"))),
-            Ok(PostFormat::GIF)
-        );
-
-        assert_eq!(
-            PostFormat::try_from(&JsonValue::String(String::from("swf"))),
-            Ok(PostFormat::SWF)
-        );
-
-        assert_eq!(
-            PostFormat::try_from(&JsonValue::String(String::from("webm"))),
-            Ok(PostFormat::WEBM)
-        );
-
-        assert_eq!(
-            PostFormat::try_from(&JsonValue::String(String::from("owo"))),
-            Err(())
-        );
-
-        assert_eq!(PostFormat::try_from(&JsonValue::Null), Err(()));
-    }
-
-    #[tokio::test]
-    async fn post_rating_from_json() {
-        assert_eq!(
-            PostRating::try_from(&JsonValue::String(String::from("s"))),
-            Ok(PostRating::Safe)
-        );
-
-        assert_eq!(
-            PostRating::try_from(&JsonValue::String(String::from("q"))),
-            Ok(PostRating::Questionable)
-        );
-
-        assert_eq!(
-            PostRating::try_from(&JsonValue::String(String::from("e"))),
-            Ok(PostRating::Explicit)
-        );
-
-        assert_eq!(
-            PostRating::try_from(&JsonValue::String(String::from("?"))),
-            Err(())
-        );
-
-        assert_eq!(PostRating::try_from(&JsonValue::Null), Err(()));
-    }
-
-    #[tokio::test]
-    async fn post_status_from_json() {
-        assert_eq!(
-            PostStatus::try_from((&JsonValue::String(String::from("active")), None)),
-            Ok(PostStatus::Active)
-        );
-
-        assert_eq!(
-            PostStatus::try_from((&JsonValue::String(String::from("flagged")), None)),
-            Ok(PostStatus::Flagged)
-        );
-
-        assert_eq!(
-            PostStatus::try_from((&JsonValue::String(String::from("pending")), None)),
-            Ok(PostStatus::Pending)
-        );
-
-        assert_eq!(
-            PostStatus::try_from((&JsonValue::String(String::from("deleted")), None)),
-            Ok(PostStatus::Deleted(String::from("")))
-        );
-
-        assert_eq!(
-            PostStatus::try_from((&JsonValue::String(String::from("deleted")), Some("foo"))),
-            Ok(PostStatus::Deleted(String::from("foo")))
-        );
-
-        assert_eq!(
-            PostStatus::try_from((&JsonValue::String(String::from("invalid")), None)),
-            Err(())
-        );
-
-        assert_eq!(PostStatus::try_from((&JsonValue::Null, None)), Err(()));
-    }
-
-    #[tokio::test]
-    async fn post_from_json_basic() {
-        let example_json = include_str!("mocked/id_8595.json");
-
-        let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
-        let post = Post::try_from(&parsed).unwrap();
-
-        assert_eq!(post.raw, parsed.to_string());
-
-        assert_eq!(post.id, 8595);
-        assert_eq!(
-            post.md5,
-            Some(String::from("e9fbd2f2d0703a9775f245d55b9a0f9f"))
-        );
-        assert_eq!(post.status, PostStatus::Active);
-
-        assert_eq!(post.author, String::from("Anomynous"));
-        assert_eq!(post.creator_id, Some(46));
-        assert_eq!(post.created_at, Utc.timestamp(1182709502, 993870000));
-
-        assert_eq!(post.artists, vec![String::from("jessica_willard")]);
-        assert_eq!(
-            post.tags,
-            vec![
-                String::from("2005"),
-                String::from("alley"),
-                String::from("anthro"),
-                String::from("ball"),
-                String::from("bottomwear"),
-                String::from("brown_fur"),
-                String::from("canid"),
-                String::from("canine"),
-                String::from("canis"),
-                String::from("child"),
-                String::from("clothed"),
-                String::from("clothing"),
-                String::from("colored_pencil_(artwork)"),
-                String::from("commentary"),
-                String::from("cub"),
-                String::from("domestic_cat"),
-                String::from("domestic_dog"),
-                String::from("duo"),
-                String::from("english_text"),
-                String::from("felid"),
-                String::from("feline"),
-                String::from("felis"),
-                String::from("female"),
-                String::from("fur"),
-                String::from("ghetto"),
-                String::from("grass"),
-                String::from("happy"),
-                String::from("jessica_willard"),
-                String::from("male"),
-                String::from("mammal"),
-                String::from("mixed_media"),
-                String::from("multicolored_fur"),
-                String::from("outside"),
-                String::from("pants"),
-                String::from("pen_(artwork)"),
-                String::from("playing"),
-                String::from("politics"),
-                String::from("racism"),
-                String::from("shirt"),
-                String::from("sign"),
-                String::from("skirt"),
-                String::from("smile"),
-                String::from("text"),
-                String::from("topwear"),
-                String::from("traditional_media_(artwork)"),
-                String::from("white_fur"),
-                String::from("young"),
-            ]
-        );
-        assert_eq!(post.rating, PostRating::Safe);
-        assert_eq!(post.description, String::from(""));
-
-        assert_eq!(post.parent_id, None);
-        assert_eq!(post.children, vec![128898]);
-        assert_eq!(
-            post.sources,
-            vec![
-                String::from("Jessica Willard, \"jw-babysteps.jpg\""),
-                String::from("http://us-p.vclart.net/vcl/Artists/J-Willard/jw-babysteps.jpg"),
-                String::from("http://www.furaffinity.net/view/185399/"),
-            ]
-        );
-
-        assert_eq!(post.has_notes, false);
-        assert_eq!(post.has_comments, true);
-
-        assert_eq!(post.fav_count, 159);
-        assert_eq!(post.score, 76);
-
-        assert_eq!(
-            post.file_url,
-            Some(String::from(
-                "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
-            ))
-        );
-        assert_eq!(post.file_ext, Some(PostFormat::JPG));
-        assert_eq!(post.file_size, Some(135618));
-
-        assert_eq!(post.width, 800);
-        assert_eq!(post.height, 616);
-
-        assert_eq!(
-            post.sample_url,
-            Some(String::from(
-                "https://static1.e621.net/data/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
-            ))
-        );
-        assert_eq!(post.sample_width, Some(800));
-        assert_eq!(post.sample_height, Some(616));
-
-        assert_eq!(
-            post.preview_url,
-            Some(String::from(
-                "https://static1.e621.net/data/preview/e9/fb/e9fbd2f2d0703a9775f245d55b9a0f9f.jpg"
-            ))
-        );
-
-        assert_eq!(post.preview_width, Some(150));
-        assert_eq!(post.preview_height, Some(115));
-    }
-
-    #[tokio::test]
-    async fn post_default() {
-        assert_eq!(
-            Post::default(),
-            Post {
-                raw: String::from(""),
-
-                id: 0,
-                md5: None,
-                status: PostStatus::Pending,
-
-                author: String::from(""),
-                creator_id: None,
-                created_at: Utc.timestamp(0, 0),
-
-                artists: Vec::new(),
-                tags: Vec::new(),
-                rating: PostRating::Explicit,
-                description: String::from(""),
-
-                parent_id: None,
-                children: Vec::new(),
-                sources: Vec::new(),
-
-                has_notes: false,
-                has_comments: false,
-
-                fav_count: 0,
-                score: 0,
-
-                file_url: None,
-                file_ext: None,
-                file_size: None,
-
-                width: 0,
-                height: 0,
-
-                sample_url: None,
-                sample_width: None,
-                sample_height: None,
-
-                preview_url: None,
-                preview_width: None,
-                preview_height: None,
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn post_format_to_string() {
-        assert_eq!(PostFormat::JPG.to_string(), "JPG");
-        assert_eq!(PostFormat::PNG.to_string(), "PNG");
-        assert_eq!(PostFormat::GIF.to_string(), "GIF");
-        assert_eq!(PostFormat::SWF.to_string(), "SWF");
-        assert_eq!(PostFormat::WEBM.to_string(), "WEBM");
-    }
-
-    #[tokio::test]
-    async fn post_rating_to_string() {
-        assert_eq!(PostRating::Safe.to_string(), "safe");
-        assert_eq!(PostRating::Questionable.to_string(), "questionable");
-        assert_eq!(PostRating::Explicit.to_string(), "explicit");
-    }
-
-    #[tokio::test]
-    async fn post_status_is_deleted() {
-        assert!(PostStatus::Deleted(String::from("foo")).is_deleted());
-    }
-
-    #[tokio::test]
-    async fn post_status_is_not_deleted() {
-        assert!(!PostStatus::Active.is_deleted());
-    }
-
-    #[tokio::test]
-    async fn post_is_deleted() {
-        let post = Post {
-            status: PostStatus::Deleted(String::from("foo")),
-            ..Default::default()
-        };
-
-        assert!(post.is_deleted());
-    }
-
-    #[tokio::test]
-    async fn post_is_not_deleted() {
-        let post = Post {
-            status: PostStatus::Active,
-            ..Default::default()
-        };
-
-        assert!(!post.is_deleted());
     }
 }

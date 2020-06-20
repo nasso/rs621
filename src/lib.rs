@@ -2,40 +2,61 @@
 //!
 //! ## Usage
 //!
-//! First, create a [`Client`]. You have to provide a descriptive User-Agent for your project. The
-//! official API encourages you to include your E621 username so that you may be contacted if your
-//! project causes problems.
+//! Note: the API is highly asynchronous. If you're not familiar with those concepts, check out
+//! [Asynchronous Programming in Rust](https://rust-lang.github.io/async-book/).
+//!
+//! First, create a [`Client`]. You'll need to provide the domain URL you'd like to use, without the
+//! final slash (most likely "https://e926.net" or its unsafe counterpart). You also have to provide
+//! a descriptive User-Agent for your project. The official API encourages you to include your E621
+//! username so that you may be contacted if your project causes problems.
 //!
 //! ```no_run
 //! # use rs621::client::Client;
 //! # fn main() -> Result<(), rs621::error::Error> {
-//! let client = Client::new("MyProject/1.0 (by username on e621)")?;
+//! let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
 //! # Ok(()) }
 //! ```
 //!
-//! Now it's ready to go! For example you can get post #8595 like this:
+//! You can now use that client to make various operations, like a basic search, with
+//! [`Client::post_search`]. The function returns a [`Stream`], which is like an asynchronous
+//! version of [`Iterator`].
 //!
 //! ```no_run
 //! # use rs621::client::Client;
-//! # fn main() -> Result<(), rs621::error::Error> {
-//! # let client = Client::new("MyProject/1.0 (by username on e621)")?;
-//! let post = client.get_post(8595)?;
+//! use futures::prelude::*;
 //!
-//! assert_eq!(post.id, 8595);
-//! # Ok(()) }
-//! ```
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), rs621::error::Error> {
+//! # let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+//! let mut post_stream = client.post_search(&["fluffy", "order:score"][..]).take(20);
 //!
-//! Or you can make a search like on the website, using tags:
-//!
-//! ```no_run
-//! # use rs621::client::Client;
-//! # fn main() -> Result<(), rs621::error::Error> {
-//! # let client = Client::new("MyProject/1.0 (by username on e621)")?;
-//! for post in client.post_search(&["fluffy", "rating:s"][..]).take(20) {
+//! while let Some(post) = post_stream.next().await {
 //!     println!("#{}", post?.id);
 //! }
 //! # Ok(()) }
 //! ```
+//!
+//! If you have a list of post IDs:
+//!
+//! ```no_run
+//! # use rs621::client::Client;
+//! use futures::prelude::*;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), rs621::error::Error> {
+//! # let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+//! let mut post_stream = client.get_posts(&[8595, 535, 2105, 1470]);
+//!
+//! while let Some(post) = post_stream.next().await {
+//!     println!("Post #{}", post?.id);
+//! }
+//! # Ok(()) }
+//! ```
+//!
+//! Best effort should be made to make as few API requests as possible. `rs621` helps by providing
+//! bulk-oriented methods that take care of this for you. For example, if you have 400 post IDs
+//! you'd like to fetch, a single call to [`Client::get_posts`] should be enough and WILL be
+//! faster. Do NOT call it repeatedly in a loop.
 //!
 //! ## Notes from the official API:
 //!

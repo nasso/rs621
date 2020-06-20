@@ -46,11 +46,8 @@ impl Client {
         &self,
         endpoint: &str,
     ) -> impl Future<Output = Result<serde_json::Value>> {
-        let request = self
-            .client
-            .get(&format!("{}{}", self.url, endpoint))
-            .headers(self.headers.clone())
-            .send();
+        let url = format!("{}{}", self.url, endpoint);
+        let request = self.client.get(&url).headers(self.headers.clone()).send();
 
         async move {
             // Wait first to make sure we're not exceeding the limit
@@ -67,6 +64,7 @@ impl Client {
                         }
                     } else {
                         Err(Error::Http {
+                            url,
                             code: res.status().as_u16(),
                             reason: match res.json::<serde_json::Value>().await {
                                 Ok(v) => v["reason"].as_str().map(ToString::to_string),
@@ -93,6 +91,7 @@ mod tests {
     async fn get_json_endpoint_http_error() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
+        // note: these are still using old endpoint but it doesn't matter here
         let _m = mock("GET", "/post/show.json?id=8595")
             .with_status(500)
             .with_body(r#"{"success":false,"reason":"foo"}"#)
@@ -101,6 +100,7 @@ mod tests {
         assert_eq!(
             client.get_json_endpoint("/post/show.json?id=8595").await,
             Err(crate::error::Error::Http {
+                url: format!("{}/post/show.json?id=8595", mockito::server_url()),
                 code: 500,
                 reason: Some(String::from("foo"))
             })
