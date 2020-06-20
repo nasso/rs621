@@ -1,43 +1,212 @@
 use {
-    super::{
-        client::Client,
-        error::Result as Rs621Result,
-        post::Post,
-        utils::{get_json_api_time, get_json_value_as},
-    },
+    super::{client::Client, error::Result as Rs621Result},
     chrono::{offset::Utc, DateTime},
     derivative::Derivative,
     futures::{
         prelude::*,
         task::{Context, Poll},
     },
-    serde_json::Value as JsonValue,
-    std::{convert::TryFrom, pin::Pin},
+    itertools::Itertools,
+    serde::Deserialize,
+    std::pin::Pin,
 };
 
-/// An iterator over [`PoolListEntry`]s.
-///
-/// [`PoolListEntry`]: struct.PoolListEntry.html
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PoolCategory {
+    Series,
+    Collection,
+}
+
+/// Structure representing a pool.
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct Pool {
+    pub id: u64,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub creator_id: u64,
+    pub description: String,
+    pub is_active: bool,
+    pub category: PoolCategory,
+    pub is_deleted: bool,
+    pub post_ids: Vec<u64>,
+    pub creator_name: String,
+    pub post_count: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PoolSearchOrder {
+    Name,
+    CreatedAt,
+    UpdatedAt,
+    PostCount,
+}
+
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct PoolSearch {
+    pub name_matches: Option<String>,
+    pub id: Option<Vec<u64>>,
+    pub description_matches: Option<String>,
+    pub creator_name: Option<String>,
+    pub creator_id: Option<u64>,
+    pub is_active: Option<bool>,
+    pub is_deleted: Option<bool>,
+    pub category: Option<PoolCategory>,
+    pub order: Option<PoolSearchOrder>,
+}
+
+impl PoolSearch {
+    fn to_search_parameters(&self) -> String {
+        let mut params = String::new();
+
+        if let Some(ref value) = self.name_matches {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[name_matches]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value));
+        }
+
+        if let Some(ref value) = self.id {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[id]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value.iter().join(",")));
+        }
+
+        if let Some(ref value) = self.description_matches {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[description_matches]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value));
+        }
+
+        if let Some(ref value) = self.creator_name {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[creator_name]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value));
+        }
+
+        if let Some(ref value) = self.creator_id {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[creator_id]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value.to_string()));
+        }
+
+        if let Some(ref value) = self.is_active {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[is_active]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value.to_string()));
+        }
+
+        if let Some(ref value) = self.is_deleted {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[is_deleted]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(&value.to_string()));
+        }
+
+        if let Some(ref value) = self.category {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[category]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(match value {
+                PoolCategory::Series => "series",
+                PoolCategory::Collection => "collection",
+            }));
+        }
+
+        if let Some(ref value) = self.order {
+            params.push('&');
+            params.push_str(&urlencoding::encode("search[order]"));
+            params.push_str("=");
+            params.push_str(&urlencoding::encode(match value {
+                PoolSearchOrder::Name => "name",
+                PoolSearchOrder::CreatedAt => "created_at",
+                PoolSearchOrder::UpdatedAt => "updated_at",
+                PoolSearchOrder::PostCount => "post_count",
+            }));
+        }
+
+        params
+    }
+
+    pub fn new() -> Self {
+        PoolSearch::default()
+    }
+
+    pub fn name_matches<T: ToString>(mut self, value: T) -> Self {
+        self.name_matches = Some(value.to_string());
+        self
+    }
+
+    pub fn id(mut self, value: Vec<u64>) -> Self {
+        self.id = Some(value);
+        self
+    }
+
+    pub fn description_matches<T: ToString>(mut self, value: T) -> Self {
+        self.description_matches = Some(value.to_string());
+        self
+    }
+
+    pub fn creator_name<T: ToString>(mut self, value: T) -> Self {
+        self.creator_name = Some(value.to_string());
+        self
+    }
+
+    pub fn creator_id(mut self, value: u64) -> Self {
+        self.creator_id = Some(value);
+        self
+    }
+
+    pub fn is_active(mut self, value: bool) -> Self {
+        self.is_active = Some(value);
+        self
+    }
+
+    pub fn is_deleted(mut self, value: bool) -> Self {
+        self.is_deleted = Some(value);
+        self
+    }
+
+    pub fn category(mut self, value: PoolCategory) -> Self {
+        self.category = Some(value);
+        self
+    }
+
+    pub fn order(mut self, value: PoolSearchOrder) -> Self {
+        self.order = Some(value);
+        self
+    }
+}
+
+type PoolSearchApiResponse = Vec<Pool>;
+
+/// A stream of [`Pool`]s.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct PoolStream<'a> {
     client: &'a Client,
-    query: Option<String>,
+    search: PoolSearch,
 
     query_url: Option<String>,
     #[derivative(Debug = "ignore")]
     query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
 
     page: u64,
-    chunk: Vec<Rs621Result<PoolListEntry>>,
+    chunk: Vec<Rs621Result<Pool>>,
     ended: bool,
 }
 
 impl<'a> PoolStream<'a> {
-    fn new(client: &'a Client, query: Option<&str>) -> Self {
+    fn new(client: &'a Client, search: PoolSearch) -> Self {
         PoolStream {
             client,
-            query: query.map(urlencoding::encode),
+            search,
 
             query_url: None,
             query_future: None,
@@ -50,12 +219,9 @@ impl<'a> PoolStream<'a> {
 }
 
 impl<'a> Stream for PoolStream<'a> {
-    type Item = Rs621Result<PoolListEntry>;
+    type Item = Rs621Result<Pool>;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Rs621Result<PoolListEntry>>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Rs621Result<Pool>>> {
         enum QueryPollRes {
             Pending,
             Err(crate::error::Error),
@@ -75,15 +241,15 @@ impl<'a> Stream for PoolStream<'a> {
                         match res {
                             Ok(body) => {
                                 // put everything in the chunk
-                                this.chunk = body
-                                    .as_array()
-                                    .unwrap()
-                                    .iter()
-                                    .rev()
-                                    .map(PoolListEntry::try_from)
-                                    .collect();
+                                this.chunk =
+                                    match serde_json::from_value::<PoolSearchApiResponse>(body) {
+                                        Ok(res) => {
+                                            res.into_iter().rev().map(|pool| Ok(pool)).collect()
+                                        }
+                                        Err(e) => vec![Err(e.into())],
+                                    };
 
-                                // mark the stream as ended if there was no posts
+                                // mark the stream as ended if there was no pools
                                 this.ended = this.chunk.is_empty();
                                 QueryPollRes::NotFetching
                             }
@@ -119,18 +285,15 @@ impl<'a> Stream for PoolStream<'a> {
                     return Poll::Ready(Some(pool));
                 }
                 QueryPollRes::NotFetching => {
-                    // we need to load a new chunk of posts
+                    // we need to load a new chunk of pools
                     let url = format!(
-                        "/pool/index.json?page={}{}",
+                        "/pools.json?page={}{}",
                         {
                             let page = this.page;
                             this.page += 1;
                             page
                         },
-                        match &this.query {
-                            None => String::new(),
-                            Some(title) => format!("&query={}", title),
-                        }
+                        this.search.to_search_parameters(),
                     );
                     this.query_url = Some(url);
 
@@ -145,293 +308,62 @@ impl<'a> Stream for PoolStream<'a> {
     }
 }
 
-/// Represents the pool information returned by pool listing functions.
-///
-/// The main difference between [`PoolListEntry`] and [`Pool`] is the absence of the description
-/// field in the former.
-/// You can convert a [`PoolListEntry`] to a regular [`Pool`] using a `&Client` because [`Pool`] is
-/// `From<(PoolListEntry, &Client)>`:
-///
-/// ```no_run
-/// # use rs621::client::Client;
-/// # use rs621::pool::{Pool, PoolListEntry};
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use std::convert::TryFrom;
-///
-/// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-///
-/// let entry: PoolListEntry = client.pool_list().next().unwrap()?;
-/// let pool = Pool::try_from((entry, &client))?;
-///
-/// println!("Description of pool #{}: {}", pool.id, pool.description);
-/// # Ok(()) }
-/// ```
-/// _Note: This function performs a request; it will be subject to a short sleep time to ensure that
-/// the API rate limit isn't exceeded._
-///
-/// [`Pool`]: struct.Pool.html
-/// [`PoolListEntry`]: struct.PoolListEntry.html
-#[derive(Debug)]
-pub struct PoolListEntry {
-    /// The raw JSON description of the pool list result (from the API).
-    pub raw: String,
-
-    /// The ID of the pool.
-    pub id: u64,
-    /// The name of the pool.
-    pub name: String,
-    /// When the pool was created.
-    pub created_at: DateTime<Utc>,
-    /// Last time the pool was updated.
-    pub updated_at: DateTime<Utc>,
-    /// The uploader's user ID.
-    pub user_id: u64,
-    /// Whether the pool is locked.
-    pub is_locked: bool,
-    /// How many posts the pool contains.
-    pub post_count: u64,
-}
-
-impl TryFrom<&JsonValue> for PoolListEntry {
-    type Error = super::error::Error;
-
-    fn try_from(v: &JsonValue) -> Rs621Result<Self> {
-        Ok(PoolListEntry {
-            raw: v.to_string(),
-
-            id: get_json_value_as(&v, "id", JsonValue::as_u64)?,
-            name: get_json_value_as(&v, "name", JsonValue::as_str)?.to_string(),
-            user_id: v["user_id"].as_u64().unwrap(),
-            created_at: get_json_api_time(&v, "created_at")?,
-            updated_at: get_json_api_time(&v, "updated_at")?,
-            is_locked: get_json_value_as(&v, "is_locked", JsonValue::as_bool)?,
-            post_count: v["post_count"].as_u64().unwrap(),
-        })
-    }
-}
-
-/// Structure representing a pool.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Pool {
-    /// The raw JSON description of the pool (from the API).
-    pub raw: String,
-
-    /// The ID of the pool.
-    pub id: u64,
-    /// The name of the pool.
-    pub name: String,
-    /// The pool's description.
-    pub description: String,
-    /// The uploader's user ID.
-    pub user_id: u64,
-    /// When the pool was created.
-    pub created_at: DateTime<Utc>,
-    /// Last time the pool was updated.
-    pub updated_at: DateTime<Utc>,
-    /// Whether the pool is locked.
-    pub is_locked: bool,
-    /// Whether the pool is locked.
-    pub is_active: bool,
-    /// The posts this pool contains.
-    pub posts: Vec<Post>,
-}
-
-impl TryFrom<&JsonValue> for Pool {
-    type Error = super::error::Error;
-
-    fn try_from(v: &JsonValue) -> Rs621Result<Self> {
-        Ok(Pool {
-            raw: v.to_string(),
-
-            id: get_json_value_as(&v, "id", JsonValue::as_u64)?,
-            name: get_json_value_as(&v, "name", JsonValue::as_str)?.to_string(),
-            description: get_json_value_as(&v, "description", JsonValue::as_str)?.to_string(),
-            user_id: v["user_id"].as_u64().unwrap(),
-            created_at: get_json_api_time(&v, "created_at")?,
-            updated_at: get_json_api_time(&v, "updated_at")?,
-            is_locked: get_json_value_as(&v, "is_locked", JsonValue::as_bool)?,
-            is_active: get_json_value_as(&v, "is_active", JsonValue::as_bool)?,
-            posts: v["posts"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(Post::try_from)
-                .collect::<Rs621Result<Vec<Post>>>()?,
-        })
-    }
-}
-
 impl Client {
-    /// Returns the pool with the given ID.
+    /// Performs a pool search.
     ///
     /// ```no_run
-    /// # use rs621::client::Client;
-    /// # use rs621::pool::Pool;
-    /// # fn main() -> rs621::error::Result<()> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    /// let pool = client.get_pool(18274)?;
+    /// # use rs621::{client::Client, pool::{Pool, PoolSearch}};
+    /// use futures::prelude::*;
     ///
-    /// assert_eq!(pool.id, 18274);
-    /// # Ok(()) }
-    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
     ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    pub async fn get_pool(&self, id: u64) -> Rs621Result<Pool> {
-        let body = self
-            .get_json_endpoint(&format!("/pool/show.json?id={}", id))
-            .await?;
-
-        Pool::try_from(&body)
-    }
-
-    /// Returns an iterator over all the pools on the website.
+    /// let mut pool_stream = client.pool_search(PoolSearch::new().name_matches("foo"));
     ///
-    /// ```no_run
-    /// # use rs621::client::Client;
-    /// # use rs621::pool::Pool;
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    ///
-    /// for pool in client.pool_list().take(3) {
-    ///     assert!(pool?.id != 0);
-    /// }
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// The iterator returns [`PoolListEntry`]s, which you can convert to regular [`Pool`]s because
-    /// [`Pool`] is `From<(PoolListEntry, &Client)>`. See [`PoolListEntry`].
-    ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    ///
-    /// [`Pool`]: ../pool/struct.Pool.html
-    /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
-    pub fn pool_list<'a>(&'a self) -> PoolStream<'a> {
-        PoolStream::new(self, None)
-    }
-
-    /// Search all the pools in the website and returns an iterator over the results.
-    ///
-    /// ```no_run
-    /// # use rs621::client::Client;
-    /// # use rs621::pool::Pool;
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let client = Client::new("MyProject/1.0 (by username on e621)")?;
-    ///
-    /// for pool in client.pool_search("foo").take(3) {
+    /// while let Some(pool) = pool_stream.next().await {
     ///     assert!(pool?.name.contains("foo"));
     /// }
     /// # Ok(()) }
     /// ```
-    ///
-    /// The iterator returns [`PoolListEntry`]s, which you can convert to regular [`Pool`]s because
-    /// [`Pool`] is `From<(PoolListEntry, &Client)>`. See [`PoolListEntry`].
-    ///
-    /// _Note: This function performs a request; it will be subject to a short sleep time to ensure
-    /// that the API rate limit isn't exceeded._
-    ///
-    /// [`Pool`]: ../pool/struct.Pool.html
-    /// [`PoolListEntry`]: ../pool/struct.PoolListEntry.html
-    pub fn pool_search<'a>(&'a self, query: &str) -> PoolStream<'a> {
-        PoolStream::new(self, Some(query))
+    pub fn pool_search<'a>(&'a self, search: PoolSearch) -> PoolStream<'a> {
+        PoolStream::new(self, search)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::offset::TimeZone;
     use mockito::mock;
-
-    #[tokio::test]
-    async fn pool_list_result_from_json() {
-        let example_json = include_str!("mocked/pool_list_result-12668.json");
-
-        let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
-        let result = PoolListEntry::try_from(&parsed).unwrap();
-
-        assert_eq!(result.id, 12668);
-        assert_eq!(result.is_locked, false);
-        assert_eq!(result.name, "Random SFW name");
-        assert_eq!(result.post_count, 33);
-        assert_eq!(result.user_id, 171621);
-        assert_eq!(result.created_at, Utc.timestamp(1506450220, 569794000));
-        assert_eq!(result.updated_at, Utc.timestamp(1568077422, 207421000));
-    }
-
-    #[tokio::test]
-    async fn pool_from_json() {
-        let example_json = include_str!("mocked/pool_18274.json");
-
-        let parsed = serde_json::from_str::<JsonValue>(example_json).unwrap();
-        let pool = Pool::try_from(&parsed).unwrap();
-
-        assert_eq!(pool.id, 18274);
-        assert_eq!(pool.is_active, true);
-        assert_eq!(pool.is_locked, false);
-        assert_eq!(pool.name, "oBEARwatch_by_Murasaki_Yuri");
-        assert_eq!(pool.description, "");
-        assert_eq!(pool.posts.len(), 8);
-        assert_eq!(pool.user_id, 357072);
-        assert_eq!(pool.created_at, Utc.timestamp(1567963035, 63943000));
-        assert_eq!(pool.updated_at, Utc.timestamp(1567964144, 960193000));
-    }
-
-    #[tokio::test]
-    async fn get_pool() {
-        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
-
-        let _m = mock("GET", "/pool/show.json?id=18274")
-            .with_body(include_str!("mocked/pool_18274.json"))
-            .create();
-
-        let pool = client.get_pool(18274).await.unwrap();
-        assert_eq!(pool.id, 18274);
-    }
-
-    #[tokio::test]
-    async fn pool_list() {
-        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
-
-        let _m = [
-            mock("GET", "/pool/index.json?page=1")
-                .with_body(include_str!("mocked/pool_list-page_1.json"))
-                .create(),
-            mock("GET", "/pool/index.json?page=2")
-                .with_body(include_str!("mocked/pool_list-page_2.json"))
-                .create(),
-            // have the next page be empty to end the iterator
-            mock("GET", "/pool/index.json?page=3")
-                .with_body("[]")
-                .create(),
-        ];
-
-        let pools: Vec<_> = client.pool_list().collect().await;
-
-        // We know how many pools we have because we've mocked the requests. Hah!
-        assert_eq!(pools.len(), 6);
-    }
 
     #[tokio::test]
     async fn pool_search() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
+        let expected: Vec<Rs621Result<Pool>> = serde_json::from_str::<PoolSearchApiResponse>(
+            include_str!("mocked/pool_search-foo.json"),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|x| Ok(x))
+        .collect();
+
         let _m = [
-            mock("GET", "/pool/index.json?page=1&query=foo")
+            mock("GET", "/pools.json?page=1&search%5Bname_matches%5D=foo")
                 .with_body(include_str!("mocked/pool_search-foo.json"))
                 .create(),
             // have the next page be empty to end the iterator
-            mock("GET", "/pool/index.json?page=2&query=foo")
+            mock("GET", "/pools.json?page=2&search%5Bname_matches%5D=foo")
                 .with_body("[]")
                 .create(),
         ];
 
         // Should all contain foo in the name
-        let mut search = client.pool_search("foo");
+        let pools: Vec<Rs621Result<Pool>> = client
+            .pool_search(PoolSearch::new().name_matches("foo"))
+            .collect()
+            .await;
 
-        while let Some(pool) = search.next().await {
-            assert!(pool.unwrap().name.contains("foo"));
-        }
+        assert_eq!(pools, expected);
     }
 }

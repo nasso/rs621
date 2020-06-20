@@ -100,5 +100,5 @@ pub mod error;
 /// Post management.
 pub mod post;
 
-// /// Pool management.
-// pub mod pool;
+/// Pool management.
+pub mod pool;
