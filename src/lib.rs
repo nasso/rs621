@@ -6,9 +6,9 @@
 //! [Asynchronous Programming in Rust](https://rust-lang.github.io/async-book/).
 //!
 //! First, create a [`Client`]. You'll need to provide the domain URL you'd like to use, without the
-//! final slash (most likely "https://e926.net" or its unsafe counterpart). You also have to provide
-//! a descriptive User-Agent for your project. The official API encourages you to include your E621
-//! username so that you may be contacted if your project causes problems.
+//! final slash (most likely [https://e926.net](https://e926.net) or its unsafe counterpart).  You
+//! also have to provide a descriptive User-Agent for your project. The official API encourages you
+//! to include your E621 username so that you may be contacted if your project causes problems.
 //!
 //! ```no_run
 //! # use rs621::client::Client;
@@ -31,7 +31,7 @@
 //! let mut post_stream = client.post_search(&["fluffy", "order:score"][..]).take(20);
 //!
 //! while let Some(post) = post_stream.next().await {
-//!     println!("#{}", post?.id);
+//!     println!("Post #{}", post?.id);
 //! }
 //! # Ok(()) }
 //! ```
@@ -40,8 +40,7 @@
 //!
 //! ```no_run
 //! # use rs621::client::Client;
-//! use futures::prelude::*;
-//!
+//! # use futures::prelude::*;
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), rs621::error::Error> {
 //! # let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
@@ -84,12 +83,12 @@
 //! > second over a sustained period.
 //!
 //! `rs621` will enforce this limit with a short sleeping time after every API request being made.
-//! This short sleep time only happens in the thread the request is being made and requests made in
-//! other threads will NOT be affected. Thus, **if you are using `rs621` across multiple threads,
-//! you are responsible for making sure that you aren't exceeding the upper rate limit.** Waiting
-//! for functions performing requests in other threads to return should be enough.
 //!
 //! [`Client`]: client/struct.Client.html
+//! [`Client::post_search`]: client/struct.Client.html#method.post_search
+//! [`Stream`]: https://docs.rs/futures/0.3.5/futures/stream/trait.Stream.html
+//! [`Iterator`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html
+//! [`Client::get_posts`]: client/struct.Client.html#method.get_posts
 
 /// Client related structures.
 pub mod client;

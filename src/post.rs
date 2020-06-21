@@ -38,21 +38,21 @@ pub struct PostFile {
     pub ext: PostFileExtension,
     pub size: u64,
     pub md5: String,
-    pub url: String,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct PostPreview {
     pub width: u64,
     pub height: u64,
-    pub url: String,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct PostSample {
     pub width: u64,
     pub height: u64,
-    pub url: String,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -265,7 +265,7 @@ where
 {
     fn from(q: &[T]) -> Self {
         let tags: Vec<&str> = q.iter().map(|t| t.as_ref()).collect();
-        let query_str = tags.join("+");
+        let query_str = tags.join(" ");
         let url_encoded_tags = urlencoding::encode(&query_str);
         let ordered = tags.iter().any(|t| t.starts_with("order:"));
 
@@ -355,19 +355,20 @@ impl<'a> Stream for PostSearchStream<'a> {
                                     _ => 0,
                                 };
 
-                                // we can know what will be the next page
-                                this.next_page = match this.query.ordered {
-                                    true => match this.next_page {
+                                // we now know what will be the next page
+                                this.next_page = if this.query.ordered {
+                                    match this.next_page {
                                         SearchPage::Page(i) => SearchPage::Page(i + 1),
                                         _ => SearchPage::Page(1),
-                                    },
-                                    false => match this.next_page {
+                                    }
+                                } else {
+                                    match this.next_page {
                                         SearchPage::Page(_) => SearchPage::BeforePost(last_id),
                                         SearchPage::BeforePost(_) => {
                                             SearchPage::BeforePost(last_id)
                                         }
                                         SearchPage::AfterPost(_) => SearchPage::AfterPost(last_id),
-                                    },
+                                    }
                                 };
 
                                 // mark the stream as ended if there was no posts

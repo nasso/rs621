@@ -3,7 +3,7 @@ use rs621::{client::Client, pool::PoolSearch};
 
 #[tokio::main]
 async fn main() -> rs621::error::Result<()> {
-    let client = Client::new("https://e621.net", "MyProject/1.0 (by username on e621)")?;
+    let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
 
     println!("Pools by Lynxgriffin!");
 

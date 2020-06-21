@@ -13,42 +13,70 @@ Rust bindings for the [e621.net](https://e926.net) API.
 
 E621 is a large online archive of furry (anthropomorphic) art. `rs621` provides
 easy-to-use bindings to its public HTTP API. It uses the `reqwest` crate to make
-the requests over HTTPS.
+HTTPs requests and exposes an asynchronous API.
 
 ## Features
 
-- Convenient iterator based API.
+- Highly asynchronous
+- Convenient stream-based API.
 - Post listing and searching, using any of the search options from the website.
 - Pool listing and searching.
 - Unlimited result count (automatically makes more requests in sequence to go
     beyond the API limit of 320 posts per request).
+- Automatic rate-limit throttling.
+- Bulk-oriented API.
 
 ## Usage
 
-First, create a `Client`. You have to provide a descriptive User-Agent for your
-project. The official API encourages you to include your E621 username so that
-you may be contacted if your project causes problems.
+Note: the API is highly asynchronous. If you're not familiar with those
+concepts, check out
+[Asynchronous Programming in Rust](https://rust-lang.github.io/async-book/).
+
+First, create a [`Client`]. You'll need to provide the domain URL you'd like to
+use, without the final slash (most likely [https://e926.net](https://e926.net)
+or its unsafe counterpart).  You also have to provide a descriptive User-Agent
+for your project. The official API encourages you to include your E621 username
+so that you may be contacted if your project causes problems.
 
 ```rust
-let client = Client::new("MyProject/1.0 (by username on e621)")?;
+let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
 ```
 
-Now it's ready to go! For example you can get post #8595 like this:
+You can now use that client to make various operations, like a basic search,
+with [`Client::post_search`]. The function returns a [`Stream`], which is like
+an asynchronous version of [`Iterator`].
 
 ```rust
-let post = client.get_post(8595)?;
+use futures::prelude::*;
 
-assert_eq!(post.id, 8595);
-```
+let mut post_stream = client.post_search(&["fluffy", "order:score"][..]).take(20);
 
-Or you can make a search like on the website, using tags:
-
-```rust
-println!("A list of cool fluffy posts:");
-for post in client.post_search(&["fluffy", "rating:s"][..]).take(20) {
-    println!("#{}", post?.id);
+while let Some(post) = post_stream.next().await {
+    println!("Post #{}", post?.id);
 }
 ```
+
+If you have a list of post IDs:
+
+```rust
+let mut post_stream = client.get_posts(&[8595, 535, 2105, 1470]);
+
+while let Some(post) = post_stream.next().await {
+    println!("Post #{}", post?.id);
+}
+```
+
+Best effort should be made to make as few API requests as possible. `rs621`
+helps by providing bulk-oriented methods that take care of this for you. For
+example, if you have 400 post IDs you'd like to fetch, a single call to
+[`Client::get_posts`] should be enough and WILL be faster. Do NOT call it
+repeatedly in a loop.
+
+[`Client`]: client/struct.Client.html
+[`Client::post_search`]: client/struct.Client.html#method.post_search
+[`Stream`]: https://docs.rs/futures/0.3.5/futures/stream/trait.Stream.html
+[`Iterator`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html
+[`Client::get_posts`]: client/struct.Client.html#method.get_posts
 
 ## Requirements
 
