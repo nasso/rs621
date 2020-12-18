@@ -11,7 +11,7 @@ use {
         de::{self, MapAccess, Visitor},
         Deserialize, Deserializer,
     },
-    std::{borrow::Borrow, pin::Pin},
+    std::{borrow::Borrow, pin::Pin, collections::HashMap},
 };
 
 /// Chunk size used for iterators performing requests
@@ -53,6 +53,7 @@ pub struct PostSample {
     pub width: u64,
     pub height: u64,
     pub url: Option<String>,
+    pub alternatives: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -181,6 +182,7 @@ impl PostSample {
             Width,
             Height,
             Url,
+            Alternatives
         }
 
         struct PostSampleVisitor;
@@ -200,6 +202,7 @@ impl PostSample {
                 let mut width = None;
                 let mut height = None;
                 let mut url = None;
+                let mut alternatives = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -231,6 +234,13 @@ impl PostSample {
 
                             url = Some(map.next_value()?);
                         }
+                        Field::Alternatives => {
+                            if alternatives.is_some() {
+                                return Err(de::Error::duplicate_field("alternatives"));
+                            }
+
+                            url = Some(map.next_value()?);
+                        }
                     }
                 }
 
@@ -242,12 +252,12 @@ impl PostSample {
                 if let Some(true) = has {
                     Ok(None)
                 } else {
-                    Ok(Some(PostSample { width, height, url }))
+                    Ok(Some(PostSample { width, height, url, alternatives }))
                 }
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["has", "width", "height", "url"];
+        const FIELDS: &'static [&'static str] = &["has", "width", "height", "url", "alternatives"];
         de.deserialize_struct("PostSample", FIELDS, PostSampleVisitor)
     }
 }
