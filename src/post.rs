@@ -53,7 +53,7 @@ pub struct PostSample {
     pub width: u64,
     pub height: u64,
     pub url: Option<String>,
-    pub alternatives: Option<HashMap<String, String>>,
+    pub alternates: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -182,7 +182,7 @@ impl PostSample {
             Width,
             Height,
             Url,
-            Alternatives
+            Alternates
         }
 
         struct PostSampleVisitor;
@@ -202,7 +202,7 @@ impl PostSample {
                 let mut width = None;
                 let mut height = None;
                 let mut url = None;
-                let mut alternatives = None;
+                let mut alternates = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -234,12 +234,12 @@ impl PostSample {
 
                             url = Some(map.next_value()?);
                         }
-                        Field::Alternatives => {
-                            if alternatives.is_some() {
-                                return Err(de::Error::duplicate_field("alternatives"));
+                        Field::Alternates => {
+                            if alternates.is_some() {
+                                return Err(de::Error::duplicate_field("alternates"));
                             }
 
-                            url = Some(map.next_value()?);
+                            alternates = Some(map.next_value()?);
                         }
                     }
                 }
@@ -252,12 +252,12 @@ impl PostSample {
                 if let Some(true) = has {
                     Ok(None)
                 } else {
-                    Ok(Some(PostSample { width, height, url, alternatives }))
+                    Ok(Some(PostSample { width, height, url, alternates }))
                 }
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["has", "width", "height", "url", "alternatives"];
+        const FIELDS: &'static [&'static str] = &["has", "width", "height", "url", "alternates"];
         de.deserialize_struct("PostSample", FIELDS, PostSampleVisitor)
     }
 }
