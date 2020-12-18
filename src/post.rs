@@ -49,11 +49,20 @@ pub struct PostPreview {
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct PostSampleAlternates {
+    #[serde(rename = "type")]
+    pub stype: String,
+    pub height: u64,
+    pub width: u64,
+    pub urls: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct PostSample {
     pub width: u64,
     pub height: u64,
     pub url: Option<String>,
-    pub alternates: Option<HashMap<String, String>>,
+    pub alternates: Option<HashMap<String, PostSampleAlternates>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
