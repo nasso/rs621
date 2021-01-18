@@ -47,6 +47,21 @@ impl Client {
         })
     }
 
+    pub fn with_proxy(
+        url: &str,
+        user_agent: impl AsRef<[u8]>,
+        proxy: reqwest::Proxy,
+    ) -> Result<Self> {
+        Ok(Client {
+            client: reqwest::Client::builder().proxy(proxy).build().map_err(|_|
+                Error::CannotCreateClient {
+                    desc: "TLS backend cannot be initialized, or the resolver cannot load the system configuration".into()
+                }
+            )?,
+            ..Client::new(url, user_agent)?
+        })
+    }
+
     pub fn get_json_endpoint(
         &self,
         endpoint: &str,
