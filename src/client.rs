@@ -50,6 +50,9 @@ impl Client {
         })
     }
 
+    /// Create a new client with the specified User-Agent header and proxy. The API requires a
+    /// non-empty User-Agent header for all requests, preferably including your E621 username and
+    /// the name of your project.
     pub fn with_proxy(url: &str, user_agent: impl AsRef<[u8]>, proxy: &str) -> Result<Self> {
         Ok(Client {
             client: reqwest::Client::builder().proxy(Proxy::https(proxy).map_err(|_| Error::CannotCreateClient { desc: "Failed to initialize a proxy".into() })?).build().map_err(|_|
