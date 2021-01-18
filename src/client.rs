@@ -1,7 +1,10 @@
 use {
     super::error::{Error, Result},
     futures::prelude::*,
-    reqwest::header::{HeaderMap, HeaderValue},
+    reqwest::{
+        header::{HeaderMap, HeaderValue},
+        Proxy,
+    },
     std::sync::{Arc, Mutex},
 };
 
@@ -47,13 +50,9 @@ impl Client {
         })
     }
 
-    pub fn with_proxy(
-        url: &str,
-        user_agent: impl AsRef<[u8]>,
-        proxy: reqwest::Proxy,
-    ) -> Result<Self> {
+    pub fn with_proxy(url: &str, user_agent: impl AsRef<[u8]>, proxy: &str) -> Result<Self> {
         Ok(Client {
-            client: reqwest::Client::builder().proxy(proxy).build().map_err(|_|
+            client: reqwest::Client::builder().proxy(Proxy::https(proxy).map_err(|_| Error::CannotCreateClient { desc: "Failed to initialize a proxy".into() })?).build().map_err(|_|
                 Error::CannotCreateClient {
                     desc: "TLS backend cannot be initialized, or the resolver cannot load the system configuration".into()
                 }
