@@ -156,7 +156,12 @@ mod tests {
 
     #[tokio::test]
     async fn create_client_with_proxy_works() {
-        assert!(Client::with_proxy(&mockito::server_url(), b"rs621/unit_test", &mockito::server_url()).is_ok());
+        assert!(Client::with_proxy(
+            &mockito::server_url(),
+            b"rs621/unit_test",
+            &mockito::server_url()
+        )
+        .is_ok());
     }
 
     #[tokio::test]
