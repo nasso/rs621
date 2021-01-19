@@ -162,6 +162,22 @@ mod tests {
             &mockito::server_url()
         )
         .is_ok());
+
+        #[cfg(feature = "socks")]
+        assert!(Client::with_proxy(
+            &mockito::server_url(),
+            b"rs621/unit_test",
+            &("socks5://".to_owned() + format!("{}", &mockito::server_address()).as_str())
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_client_with_invalid_proxy_fails() {
+        assert!(
+            Client::with_proxy(&mockito::server_url(), b"rs621/unit/test", "invalid_proxy")
+                .is_err()
+        );
     }
 
     #[tokio::test]
