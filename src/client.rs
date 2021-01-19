@@ -55,7 +55,7 @@ impl Client {
     /// the name of your project.
     pub fn with_proxy(url: &str, user_agent: impl AsRef<[u8]>, proxy: &str) -> Result<Self> {
         Ok(Client {
-            client: reqwest::Client::builder().proxy(Proxy::https(proxy).map_err(|_| Error::CannotCreateClient { desc: "Failed to initialize a proxy".into() })?).build().map_err(|_|
+            client: reqwest::Client::builder().proxy(Proxy::https(proxy).map_err(|_| Error::CannotCreateClient { desc: "Invalid proxy address".into() })?).build().map_err(|_|
                 Error::CannotCreateClient {
                     desc: "TLS backend cannot be initialized, or the resolver cannot load the system configuration".into()
                 }
@@ -152,6 +152,11 @@ mod tests {
                 m.into()
             })
         );
+    }
+
+    #[tokio::test]
+    async fn create_client_with_proxy_works() {
+        assert!(Client::with_proxy(&mockito::server_url(), b"rs621/unit_test", &mockito::server_url()).is_ok());
     }
 
     #[tokio::test]
