@@ -1,6 +1,6 @@
 [package]
 name = "rs621"
-version = "0.6.0-alpha1"
+version = "0.6.0"
 authors = ["nasso <nassomails@gmail.com>"]
 edition = "2018"
 description = "Rust crate for the E621 API (a large online archive of furry art)."
@@ -21,25 +21,25 @@ codecov = { repository = "nasso/rs621" }
 socks = ["reqwest/socks"]
 
 [dependencies]
-custom_error = "1.7"
-urlencoding = "1.0"
+custom_error = "1"
+urlencoding = "1"
 chrono = { version = "0.4", features = ["serde"] }
-serde = { version = "1.0", features= ["derive"] }
-serde_json = "1.0"
-derivative = "2.1"
-itertools = "0.9"
+serde = { version = "1", features= ["derive"] }
+serde_json = "1"
+derivative = "2"
+itertools = "0.10"
 
 [dependencies.futures]
 version = "0.3"
 default-features = false
 
 [dependencies.reqwest]
-version = "0.10"
+version = "0.11"
 features = ["json"]
 
 [dev-dependencies]
-mockito = "0.23"
+mockito = "0.29"
 
 [dev-dependencies.tokio]
-version = "0.2"
-features = ["rt-threaded", "macros"]
+version = "1"
+features = ["rt-multi-thread", "macros"]
