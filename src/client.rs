@@ -1,7 +1,10 @@
 use {
     super::error::{Error, Result},
     futures::prelude::*,
-    reqwest::header::{HeaderMap, HeaderValue},
+    reqwest::{
+        header::{HeaderMap, HeaderValue},
+        Proxy,
+    },
     std::sync::{Arc, Mutex},
 };
 
@@ -44,6 +47,20 @@ impl Client {
             url: url.to_string(),
             client: reqwest::Client::new(),
             headers: create_header_map(user_agent)?,
+        })
+    }
+
+    /// Create a new client with the specified User-Agent header and proxy. The API requires a
+    /// non-empty User-Agent header for all requests, preferably including your E621 username and
+    /// the name of your project.
+    pub fn with_proxy(url: &str, user_agent: impl AsRef<[u8]>, proxy: &str) -> Result<Self> {
+        Ok(Client {
+            client: reqwest::Client::builder().proxy(Proxy::https(proxy).map_err(|_| Error::CannotCreateClient { desc: "Invalid proxy address".into() })?).build().map_err(|_|
+                Error::CannotCreateClient {
+                    desc: "TLS backend cannot be initialized, or the resolver cannot load the system configuration".into()
+                }
+            )?,
+            ..Client::new(url, user_agent)?
         })
     }
 
@@ -134,6 +151,32 @@ mod tests {
                 m.insert(String::from("dummy"), "json".into());
                 m.into()
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn create_client_with_proxy_works() {
+        assert!(Client::with_proxy(
+            &mockito::server_url(),
+            b"rs621/unit_test",
+            &mockito::server_url()
+        )
+        .is_ok());
+
+        #[cfg(feature = "socks")]
+        assert!(Client::with_proxy(
+            &mockito::server_url(),
+            b"rs621/unit_test",
+            &("socks5://".to_owned() + format!("{}", &mockito::server_address()).as_str())
+        )
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_client_with_invalid_proxy_fails() {
+        assert!(
+            Client::with_proxy(&mockito::server_url(), b"rs621/unit/test", "invalid_proxy")
+                .is_err()
         );
     }
 

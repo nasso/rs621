@@ -17,6 +17,9 @@ codecov = { repository = "nasso/rs621" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+socks = ["reqwest/socks"]
+
 [dependencies]
 custom_error = "1.7"
 urlencoding = "1.0"
