@@ -8,7 +8,7 @@ use {
     },
     itertools::Itertools,
     serde::{
-        de::{self, MapAccess, Visitor},
+        de::{self, Visitor},
         Deserialize, Deserializer,
     },
     std::{borrow::Borrow, pin::Pin, collections::HashMap},
@@ -54,7 +54,7 @@ pub struct PostSampleAlternates {
     pub stype: String,
     pub height: u64,
     pub width: u64,
-    pub urls: Vec<String>,
+    pub urls: Vec<Option<String>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -62,7 +62,7 @@ pub struct PostSample {
     pub width: u64,
     pub height: u64,
     pub url: Option<String>,
-    pub alternates: Option<HashMap<String, PostSampleAlternates>>,
+    pub alternates: HashMap<String, PostSampleAlternates>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -125,8 +125,7 @@ pub struct Post {
     pub updated_at: Option<DateTime<Utc>>,
     pub file: PostFile,
     pub preview: PostPreview,
-    #[serde(deserialize_with = "PostSample::from_json")]
-    pub sample: Option<PostSample>,
+    pub sample: PostSample,
     pub score: PostScore,
     pub tags: PostTags,
     pub locked_tags: Vec<String>,
@@ -177,98 +176,6 @@ where
     }
 
     de.deserialize_any(NullableBoolVisitor)
-}
-
-impl PostSample {
-    fn from_json<'de, D>(de: D) -> Result<Option<PostSample>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Has,
-            Width,
-            Height,
-            Url,
-            Alternates
-        }
-
-        struct PostSampleVisitor;
-
-        impl<'de> Visitor<'de> for PostSampleVisitor {
-            type Value = Option<PostSample>;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct PostSample")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<Option<PostSample>, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut has = None;
-                let mut width = None;
-                let mut height = None;
-                let mut url = None;
-                let mut alternates = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Has => {
-                            if has.is_some() {
-                                return Err(de::Error::duplicate_field("has"));
-                            }
-
-                            has = Some(map.next_value()?);
-                        }
-                        Field::Width => {
-                            if width.is_some() {
-                                return Err(de::Error::duplicate_field("width"));
-                            }
-
-                            width = Some(map.next_value()?);
-                        }
-                        Field::Height => {
-                            if height.is_some() {
-                                return Err(de::Error::duplicate_field("height"));
-                            }
-
-                            height = Some(map.next_value()?);
-                        }
-                        Field::Url => {
-                            if url.is_some() {
-                                return Err(de::Error::duplicate_field("url"));
-                            }
-
-                            url = Some(map.next_value()?);
-                        }
-                        Field::Alternates => {
-                            if alternates.is_some() {
-                                return Err(de::Error::duplicate_field("alternates"));
-                            }
-
-                            alternates = Some(map.next_value()?);
-                        }
-                    }
-                }
-
-                let has = has.ok_or_else(|| de::Error::missing_field("has"))?;
-                let width = width.ok_or_else(|| de::Error::missing_field("width"))?;
-                let height = height.ok_or_else(|| de::Error::missing_field("height"))?;
-                let url = url.ok_or_else(|| de::Error::missing_field("url"))?;
-
-                if let Some(true) = has {
-                    Ok(None)
-                } else {
-                    Ok(Some(PostSample { width, height, url, alternates }))
-                }
-            }
-        }
-
-        const FIELDS: &'static [&'static str] = &["has", "width", "height", "url", "alternates"];
-        de.deserialize_struct("PostSample", FIELDS, PostSampleVisitor)
-    }
 }
 
 /// A search query. Contains information about the tags used and an URL encoded version of the tags.
