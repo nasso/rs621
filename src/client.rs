@@ -209,10 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_client_with_invalid_proxy_fails() {
-        assert!(
-            Client::with_proxy(&mockito::server_url(), b"rs621/unit/test", "invalid_proxy")
-                .is_err()
-        );
+        assert!(Client::with_proxy(&mockito::server_url(), b"rs621/unit/test", "").is_err());
     }
 
     #[tokio::test]
