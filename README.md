@@ -1,14 +1,9 @@
 # rs621
 
-[![Build Status](https://travis-ci.com/nasso/rs621.svg?branch=master)](
-https://travis-ci.com/nasso/rs621)
-[![codecov](https://codecov.io/gh/nasso/rs621/branch/master/graph/badge.svg)](
-https://codecov.io/gh/nasso/rs621)
-[![Crates.io](https://img.shields.io/crates/v/rs621.svg)](
-https://crates.io/crates/rs621)
+[![build](https://github.com/nasso/rs621/actions/workflows/rust.yml/badge.svg)](https://github.com/nasso/rs621/actions/workflows/rust.yml)
+[![Crates.io](https://img.shields.io/crates/v/rs621.svg)](https://crates.io/crates/rs621)
 [![Docs.rs](https://docs.rs/rs621/badge.svg)](https://docs.rs/rs621)
-[![Telegram](https://img.shields.io/badge/Telegram-Join%20Chat-blue.svg)](
-https://t.me/rs621)
+[![Telegram](https://img.shields.io/badge/Telegram-Join%20Chat-blue.svg)](https://t.me/rs621)
 
 Rust bindings for the [e621.net](https://e926.net) API.
 
@@ -23,7 +18,7 @@ HTTPs requests and exposes an asynchronous API.
 - Post listing and searching, using any of the search options from the website.
 - Pool listing and searching.
 - Unlimited result count (automatically makes more requests in sequence to go
-    beyond the API limit of 320 posts per request).
+  beyond the API limit of 320 posts per request).
 - Automatic rate-limit throttling.
 - Bulk-oriented API.
 
@@ -35,7 +30,7 @@ concepts, check out
 
 First, create a [`Client`]. You'll need to provide the domain URL you'd like to
 use, without the final slash (most likely [https://e926.net](https://e926.net)
-or its unsafe counterpart).  You also have to provide a descriptive User-Agent
+or its unsafe counterpart). You also have to provide a descriptive User-Agent
 for your project. The official API encourages you to include your E621 username
 so that you may be contacted if your project causes problems.
 
@@ -73,22 +68,23 @@ example, if you have 400 post IDs you'd like to fetch, a single call to
 [`Client::get_posts`] should be enough and WILL be faster. Do NOT call it
 repeatedly in a loop.
 
-[`Client`]: client/struct.Client.html
-[`Client::post_search`]: client/struct.Client.html#method.post_search
-[`Stream`]: https://docs.rs/futures/0.3.5/futures/stream/trait.Stream.html
-[`Iterator`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html
-[`Client::get_posts`]: client/struct.Client.html#method.get_posts
+[`client`]: client/struct.Client.html
+[`client::post_search`]: client/struct.Client.html#method.post_search
+[`stream`]: https://docs.rs/futures/0.3.5/futures/stream/trait.Stream.html
+[`iterator`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html
+[`client::get_posts`]: client/struct.Client.html#method.get_posts
 
 ## Requirements
 
-`rs621` uses the `rust-openssl` crate. It has some
-requirements:
+`rs621` uses the `rust-openssl` crate. It has some requirements:
 
 On Linux:
+
 - OpenSSL 1.0.1, 1.0.2, or 1.1.0 with headers (see
-    [rust-openssl](https://github.com/sfackler/rust-openssl)).
+  [rust-openssl](https://github.com/sfackler/rust-openssl)).
 
 On Windows and macOS:
+
 - Nothing.
 
 See [reqwest on crates.io](https://crates.io/crates/reqwest) for more details.
