@@ -1,3 +1,5 @@
+use crate::error::Error;
+
 use {
     super::{client::Client, error::Result as Rs621Result},
     chrono::{offset::Utc, DateTime},
@@ -263,7 +265,7 @@ impl<'a> Stream for PostSearchStream<'a> {
                                             .rev()
                                             .map(|post| Ok(post))
                                             .collect(),
-                                        Err(e) => vec![Err(e.into())],
+                                        Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
                                     };
 
                                 let last_id = match this.chunk.first() {
@@ -417,7 +419,7 @@ where
                                             .rev()
                                             .map(|post| Ok(post))
                                             .collect(),
-                                        Err(e) => vec![Err(e.into())],
+                                        Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
                                     };
 
                                 QueryPollRes::NotFetching
@@ -513,29 +515,6 @@ impl Client {
     pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostSearchStream<'a> {
         self.post_search_from_page(tags, SearchPage::Page(1))
     }
-
-    /// Same as [`Client::post_search`], but starting from a specific result page.
-    ///
-    /// ```no_run
-    /// # use rs621::{client::Client, post::{PostRating, SearchPage}};
-    /// use futures::prelude::*;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() -> rs621::error::Result<()> {
-    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
-    ///
-    /// let mut post_stream = client
-    ///     .post_search_from_page(&["fluffy", "rating:s"][..], SearchPage::Page(4))
-    ///     .take(5);
-    ///
-    /// while let Some(post) = post_stream.next().await {
-    ///     let post = post?;
-    ///
-    ///     assert_eq!(post.rating, PostRating::Safe);
-    /// }
-    /// # Ok(()) }
-    /// ```
-    ///
 
     /// Returns a Stream over all the posts matching the search query, starting from the given page.
     ///

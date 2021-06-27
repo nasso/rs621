@@ -1,6 +1,6 @@
 [package]
 name = "rs621"
-version = "0.6.0"
+version = "0.7.0-alpha1"
 authors = ["nasso <nassomails@gmail.com>"]
 edition = "2018"
 description = "Rust crate for the E621 API (a large online archive of furry art)."
@@ -21,7 +21,8 @@ codecov = { repository = "nasso/rs621" }
 socks = ["reqwest/socks"]
 
 [dependencies]
-custom_error = "1"
+thiserror = "1"
+url = "2"
 urlencoding = "1"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

@@ -1,3 +1,5 @@
+use crate::error::Error;
+
 use {
     super::{client::Client, error::Result as Rs621Result},
     chrono::{offset::Utc, DateTime},
@@ -246,7 +248,7 @@ impl<'a> Stream for PoolStream<'a> {
                                         Ok(res) => {
                                             res.into_iter().rev().map(|pool| Ok(pool)).collect()
                                         }
-                                        Err(e) => vec![Err(e.into())],
+                                        Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
                                     };
 
                                 // mark the stream as ended if there was no pools
