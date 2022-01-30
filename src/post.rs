@@ -546,6 +546,33 @@ impl Client {
     ) -> PostSearchStream<'a> {
         PostSearchStream::new(self, tags, page)
     }
+
+    /// Returns a random post matching the search query
+    ///
+    /// ```no_run
+    /// # use {
+    /// #     rs621::{client::Client, post::PostRating},
+    /// #     futures::prelude::*,
+    /// # };
+    /// use rs621::post::SearchPage;
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    ///
+    /// let mut post = client.post_random(&["fluffy", "rating:s"][..]);
+    /// ```
+    pub async fn search_random_post<'a, T: Into<Query>>(&'a self, tags: T) -> Result<Post, Error> {
+        let tags = tags.into();
+        let url = format!("/posts/random.json?tags={}", tags.url_encoded_tags);
+        let response = self
+            .get_json_endpoint(&url)
+            .await?
+            .get_mut("post")
+            .ok_or_else(|| Error::Serial("Missing 'post' field on response".to_string()))
+            .unwrap()
+            .take();
+        serde_json::from_value(response).map_err(|e| Error::Serial(format!("{}", e)))
+    }
 }
 
 #[cfg(test)]
