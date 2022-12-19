@@ -10,7 +10,7 @@ use {
     },
     itertools::Itertools,
     serde::{
-        de::{self, Visitor},
+        de::{self, Error as _, Visitor},
         Deserialize, Deserializer, Serialize,
     },
     std::{borrow::Borrow, pin::Pin},
@@ -62,6 +62,59 @@ pub struct PostScore {
     pub up: i64,
     pub down: i64,
     pub total: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum VoteMethod {
+    Toggle,
+    Set,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum VoteDir {
+    Up,
+    Down,
+}
+
+impl From<VoteDir> for i8 {
+    fn from(value: VoteDir) -> Self {
+        match value {
+            VoteDir::Up => 1,
+            VoteDir::Down => -1,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct VoteScore {
+    pub up: i64,
+    pub down: i64,
+    pub score: i64,
+
+    #[serde(deserialize_with = "VoteScore::deserialize_our_score")]
+    pub our_score: Option<VoteDir>,
+}
+
+impl VoteScore {
+    fn deserialize_our_score<'de, D>(d: D) -> Result<Option<VoteDir>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let result = match i8::deserialize(d)? {
+            -1 => Some(VoteDir::Down),
+            0 => None,
+            1 => Some(VoteDir::Up),
+
+            other => {
+                return Err(D::Error::invalid_value(
+                    de::Unexpected::Signed(other.into()),
+                    &"-1, 0, 1",
+                ))
+            }
+        };
+
+        Ok(result)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
@@ -580,12 +633,87 @@ impl Client {
 
         serde_json::from_value(value).map_err(|e| Error::Serial(format!("{}", e)))
     }
+
+    /// Vote a [`Post`] (identified by `id`) up or down.
+    ///
+    /// Use [`VoteDir::Toggle`] to clear an existing vote.
+    ///
+    /// ```no_run
+    /// # use {
+    /// #     rs621::client::Client,
+    /// #     rs621::post::{VoteDir, VoteMethod},
+    /// #     futures::prelude::*,
+    /// # };
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    ///
+    /// let scores = client.post_vote(1234, VoteMethod::Set, VoteDir::Up).await?;
+    /// assert_eq!(scores.our_score, Some(VoteDir::Up));
+    /// # Ok(()) }
+    /// ```
+    pub async fn post_vote(
+        &self,
+        id: u64,
+        method: VoteMethod,
+        dir: VoteDir,
+    ) -> Result<VoteScore, Error> {
+        #[derive(Serialize)]
+        struct Form {
+            score: i8,
+
+            #[serde(skip_serializing_if = "is_false")]
+            no_unvote: bool,
+        }
+
+        let response = self
+            .post_form(
+                &format!("/posts/{id}/votes.json"),
+                &Form {
+                    score: i8::from(dir),
+                    no_unvote: method == VoteMethod::Set,
+                },
+            )
+            .await?;
+
+        serde_json::from_value(response).map_err(|e| Error::Serial(format!("{}", e)))
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockito::{mock, Matcher};
+
+    #[tokio::test]
+    async fn post_vote_up_set() {
+        let mut client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+        client.login("foo".into(), "bar".into());
+
+        let body = r#"{"score":41,"up":44,"down":-3,"our_score":1}"#;
+
+        let _m = mock(
+            "POST",
+            Matcher::Exact("/posts/1234/votes.json?login=foo&api_key=bar".into()),
+        )
+        .match_body("score=1&no_unvote=true")
+        .with_body(body)
+        .create();
+
+        let expected = serde_json::from_str::<VoteScore>(body).unwrap();
+
+        assert_eq!(
+            client
+                .post_vote(1234, VoteMethod::Set, VoteDir::Up)
+                .await
+                .unwrap(),
+            expected
+        );
+    }
 
     #[tokio::test]
     async fn post_favorite() {
