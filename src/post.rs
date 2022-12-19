@@ -11,7 +11,7 @@ use {
     itertools::Itertools,
     serde::{
         de::{self, Visitor},
-        Deserialize, Deserializer,
+        Deserialize, Deserializer, Serialize,
     },
     std::{borrow::Borrow, pin::Pin},
 };
@@ -546,12 +546,74 @@ impl Client {
     ) -> PostSearchStream<'a> {
         PostSearchStream::new(self, tags, page)
     }
+
+    /// Mark a [`Post`] (identified by `id`) as particularly liked.
+    ///
+    /// ```no_run
+    /// # use {
+    /// #     rs621::client::Client,
+    /// #     futures::prelude::*,
+    /// # };
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    ///
+    /// let post = client.post_favorite(1234).await?;
+    /// assert_eq!(post.id, 1234);
+    /// # Ok(()) }
+    /// ```
+    pub async fn post_favorite(&self, id: u64) -> Result<Post, Error> {
+        #[derive(Serialize)]
+        struct Form {
+            post_id: u64,
+        }
+
+        let response = self
+            .post_form("/favorites.json", &Form { post_id: id })
+            .await?;
+
+        let value = response
+            .as_object()
+            .and_then(|o| o.get("post"))
+            .cloned()
+            .ok_or_else(|| Error::Serial("unexpected response".into()))?;
+
+        serde_json::from_value(value).map_err(|e| Error::Serial(format!("{}", e)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockito::{mock, Matcher};
+
+    #[tokio::test]
+    async fn post_favorite() {
+        let mut client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+        client.login("foo".into(), "bar".into());
+
+        let _m = mock(
+            "POST",
+            Matcher::Exact("/favorites.json?login=foo&api_key=bar".into()),
+        )
+        .match_body("post_id=3758515")
+        .with_body(include_str!("mocked/favorite.json"))
+        .create();
+
+        let expected =
+            serde_json::from_str::<serde_json::Value>(include_str!("mocked/favorite.json"))
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .get("post")
+                .cloned()
+                .unwrap();
+
+        assert_eq!(
+            client.post_favorite(3758515).await.unwrap(),
+            serde_json::from_value(expected).unwrap(),
+        );
+    }
 
     #[tokio::test]
     async fn search_ordered() {

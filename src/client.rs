@@ -92,23 +92,59 @@ impl Client {
         self.login = None;
     }
 
+    pub(crate) fn url(&self, endpoint: &str) -> Result<Url, url::ParseError> {
+        let mut url = self.url.join(endpoint)?;
+        if let Some((ref login, ref api_key)) = self.login {
+            url.query_pairs_mut()
+                .append_pair("login", login)
+                .append_pair("api_key", api_key);
+        }
+
+        Ok(url)
+    }
+
+    pub(crate) async fn post_form<T>(&self, endpoint: &str, body: &T) -> Result<serde_json::Value>
+    where
+        T: serde::Serialize,
+    {
+        let url = self.url(endpoint)?;
+        let request_fut = self
+            .client
+            .post(url.clone())
+            .form(body) // `.json(...)` has problems with CORS in WASM.
+            .headers(self.headers.clone())
+            .send();
+
+        self.rate_limit
+            .clone()
+            .check(async move {
+                let res = request_fut
+                    .await
+                    .map_err(|e| Error::CannotSendRequest(format!("{}", e)))?;
+
+                if res.status().is_success() {
+                    res.json()
+                        .await
+                        .map_err(|e| Error::Serial(format!("{}", e)))
+                } else {
+                    Err(Error::Http {
+                        url,
+                        code: res.status().as_u16(),
+                        reason: match res.json::<serde_json::Value>().await {
+                            Ok(v) => v["reason"].as_str().map(ToString::to_string),
+                            Err(_) => None,
+                        },
+                    })
+                }
+            })
+            .await
+    }
+
     pub fn get_json_endpoint(
         &self,
         endpoint: &str,
     ) -> impl Future<Output = Result<serde_json::Value>> {
-        let url = match self.url.join(endpoint) {
-            Ok(mut url) => {
-                if let Some((ref login, ref api_key)) = self.login {
-                    url.query_pairs_mut()
-                        .append_pair("login", login)
-                        .append_pair("api_key", api_key);
-                }
-
-                Ok(url)
-            }
-            e => e,
-        };
-
+        let url = self.url(endpoint);
         let request = url
             .clone()
             .map(|url| self.client.get(url).headers(self.headers.clone()).send());

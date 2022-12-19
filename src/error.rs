@@ -28,4 +28,4 @@ pub enum Error {
 /// Result type for `rs621`, using [`rs621::error::Error`].
 ///
 /// [`rs621::error::Error`]: enum.Error.html
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
