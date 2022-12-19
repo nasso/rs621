@@ -1,3 +1,10 @@
+#[cfg(feature = "rate-limit")]
+mod rate_limit;
+
+#[cfg(not(feature = "rate-limit"))]
+#[path = "client/dummy_rate_limit.rs"]
+mod rate_limit;
+
 use futures::Future;
 use reqwest::Url;
 
@@ -7,12 +14,7 @@ use {
         header::{HeaderMap, HeaderValue},
         Proxy,
     },
-    std::sync::{Arc, Mutex},
 };
-
-/// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
-/// so the lowest safe value we can have here is 500 ms.
-const REQ_COOLDOWN_DURATION: ::std::time::Duration = ::std::time::Duration::from_millis(600);
 
 fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     if user_agent.as_ref() == b"" {
@@ -35,7 +37,7 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
 #[derive(Debug)]
 pub struct Client {
     pub(crate) client: reqwest::Client,
-    mutex: Arc<Mutex<()>>,
+    rate_limit: rate_limit::RateLimit,
     url: Url,
     headers: HeaderMap,
     login: Option<(String, String)>,
@@ -59,7 +61,7 @@ impl Client {
         Ok(Client {
             client,
             url: Url::parse(url)?,
-            mutex: Default::default(),
+            rate_limit: Default::default(),
             headers: create_header_map(user_agent)?,
             login: None,
         })
@@ -111,17 +113,7 @@ impl Client {
             .clone()
             .map(|url| self.client.get(url).headers(self.headers.clone()).send());
 
-        let c_mutex = self.mutex.clone();
-
-        {
-            // we must lock the mutex when sleeping, just in case other stuff is going on in other threads
-            let _lock = c_mutex.lock().unwrap();
-
-            // wait first to make sure we're not exceeding the limit
-            std::thread::sleep(REQ_COOLDOWN_DURATION);
-        }
-
-        async move {
+        self.rate_limit.clone().check(async move {
             let res = request?
                 .await
                 .map_err(|e| Error::CannotSendRequest(format!("{}", e)))?;
@@ -140,7 +132,7 @@ impl Client {
                     },
                 })
             }
-        }
+        })
     }
 }
 
