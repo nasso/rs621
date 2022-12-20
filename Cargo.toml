@@ -18,7 +18,7 @@ codecov = { repository = "nasso/rs621" }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["rate-limit"]
+default = ["rate-limit", "reqwest/default-tls"]
 socks = ["reqwest/socks"]
 rate-limit = ["tokio", "tokio/time", "tokio/sync"]
 
@@ -32,7 +32,7 @@ serde_json = "1"
 derivative = "2"
 itertools = "0.10"
 futures = { version = "0.3", default-features = false }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", default-features = false, features = ["json"] }
 tokio = { optional = true, version = "1" }
 
 [dev-dependencies]

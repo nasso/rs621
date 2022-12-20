@@ -10,10 +10,7 @@ use reqwest::Url;
 
 use {
     super::error::{Error, Result},
-    reqwest::{
-        header::{HeaderMap, HeaderValue},
-        Proxy,
-    },
+    reqwest::header::{HeaderMap, HeaderValue},
 };
 
 fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
@@ -33,6 +30,12 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     }
 }
 
+#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>> + Send>;
+
+#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>>>;
+
 /// Client struct.
 #[derive(Debug)]
 pub struct Client {
@@ -45,14 +48,21 @@ pub struct Client {
 
 impl Client {
     fn create(url: &str, user_agent: impl AsRef<[u8]>, proxy: Option<&str>) -> Result<Self> {
-        let mut client = reqwest::Client::builder();
+        let client = reqwest::Client::builder();
+        let client = match proxy {
+            #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+            Some(_) => panic!("proxies are not supported in wasm"),
 
-        if let Some(proxy) = proxy {
-            let proxy =
-                Proxy::https(proxy).map_err(|e| Error::CannotCreateClient(format!("{}", e)))?;
+            #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+            Some(proxy) => {
+                let proxy = reqwest::Proxy::https(proxy)
+                    .map_err(|e| Error::CannotCreateClient(format!("{}", e)))?;
 
-            client = client.proxy(proxy);
-        }
+                client.proxy(proxy)
+            }
+
+            None => client,
+        };
 
         let client = client
             .build()
