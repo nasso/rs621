@@ -1,7 +1,10 @@
 use crate::error::Error;
 
 use {
-    super::{client::Client, error::Result as Rs621Result},
+    super::{
+        client::{Client, QueryFuture},
+        error::Result as Rs621Result,
+    },
     chrono::{offset::Utc, DateTime},
     derivative::Derivative,
     futures::{
@@ -197,7 +200,7 @@ pub struct PoolStream<'a> {
 
     query_url: Option<String>,
     #[derivative(Debug = "ignore")]
-    query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
+    query_future: Option<Pin<QueryFuture>>,
 
     page: u64,
     chunk: Vec<Rs621Result<Pool>>,

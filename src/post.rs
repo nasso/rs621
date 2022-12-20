@@ -1,7 +1,10 @@
 use crate::error::Error;
 
 use {
-    super::{client::Client, error::Result as Rs621Result},
+    super::{
+        client::{Client, QueryFuture},
+        error::Result as Rs621Result,
+    },
     chrono::{offset::Utc, DateTime},
     derivative::Derivative,
     futures::{
@@ -264,7 +267,7 @@ pub struct PostSearchStream<'a> {
     query_url: Option<String>,
 
     #[derivative(Debug = "ignore")]
-    query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
+    query_future: Option<Pin<QueryFuture>>,
 
     next_page: SearchPage,
     chunk: Vec<Rs621Result<Post>>,
@@ -416,7 +419,7 @@ where
     query_url: Option<String>,
 
     #[derivative(Debug = "ignore")]
-    query_future: Option<Pin<Box<dyn Future<Output = Rs621Result<serde_json::Value>> + Send>>>,
+    query_future: Option<Pin<QueryFuture>>,
 
     chunk: Vec<Rs621Result<Post>>,
 }
