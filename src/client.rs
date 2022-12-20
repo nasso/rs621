@@ -13,6 +13,12 @@ use {
     reqwest::header::{HeaderMap, HeaderValue},
 };
 
+#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+fn create_header_map<T: AsRef<[u8]>>(_user_agent: T) -> Result<HeaderMap> {
+    Ok(HeaderMap::new())
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
 fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     if user_agent.as_ref() == b"" {
         Err(Error::CannotCreateClient(String::from(
@@ -31,6 +37,19 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
 }
 
 #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+fn create_extra_query<T: AsRef<[u8]>>(_user_agent: T) -> Result<Vec<(String, String)>> {
+    Ok(Default::default())
+}
+
+#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+fn create_extra_query<T: AsRef<[u8]>>(user_agent: T) -> Result<Vec<(String, String)>> {
+    let value = std::str::from_utf8(user_agent.as_ref())
+        .map_err(|e| Error::InvalidHeaderValue(format!("{}", e)))?;
+
+    Ok(vec![("_client".into(), value.into())])
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
 pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>> + Send>;
 
 #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
@@ -43,6 +62,7 @@ pub struct Client {
     rate_limit: rate_limit::RateLimit,
     url: Url,
     headers: HeaderMap,
+    extra_query: Vec<(String, String)>,
     login: Option<(String, String)>,
 }
 
@@ -72,7 +92,8 @@ impl Client {
             client,
             url: Url::parse(url)?,
             rate_limit: Default::default(),
-            headers: create_header_map(user_agent)?,
+            headers: create_header_map(&user_agent)?,
+            extra_query: create_extra_query(&user_agent)?,
             login: None,
         })
     }
@@ -110,6 +131,10 @@ impl Client {
                 .append_pair("api_key", api_key);
         }
 
+        for (key, value) in &self.extra_query {
+            url.query_pairs_mut().append_pair(key, value);
+        }
+
         Ok(url)
     }
 
@@ -118,9 +143,13 @@ impl Client {
         T: serde::Serialize,
     {
         let url = self.url(endpoint)?;
-        let request_fut = self
-            .client
-            .post(url.clone())
+        let mut request = self.client.post(url.clone());
+
+        if let Some((ref username, ref password)) = self.login {
+            request = request.basic_auth(username, Some(password));
+        }
+
+        let request_fut = request
             .form(body) // `.json(...)` has problems with CORS in WASM.
             .headers(self.headers.clone())
             .send();
