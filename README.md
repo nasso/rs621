@@ -3,7 +3,6 @@
 [![build](https://github.com/nasso/rs621/actions/workflows/rust.yml/badge.svg)](https://github.com/nasso/rs621/actions/workflows/rust.yml)
 [![Crates.io](https://img.shields.io/crates/v/rs621.svg)](https://crates.io/crates/rs621)
 [![Docs.rs](https://docs.rs/rs621/badge.svg)](https://docs.rs/rs621)
-[![Telegram](https://img.shields.io/badge/Telegram-Join%20Chat-blue.svg)](https://t.me/rs621)
 
 Rust bindings for the [e621.net](https://e926.net) API.
 
