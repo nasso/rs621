@@ -22,7 +22,7 @@ use {
 /// Chunk size used for iterators performing requests
 const ITER_CHUNK_SIZE: u64 = 320;
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum PostFileExtension {
     #[serde(rename = "jpg")]
     Jpeg,
@@ -36,7 +36,7 @@ pub enum PostFileExtension {
     WebM,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct PostFile {
     pub width: u64,
     pub height: u64,
@@ -46,21 +46,21 @@ pub struct PostFile {
     pub url: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct PostPreview {
     pub width: u64,
     pub height: u64,
     pub url: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct PostSample {
     pub width: u64,
     pub height: u64,
     pub url: Option<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct PostScore {
     pub up: i64,
     pub down: i64,
@@ -88,7 +88,7 @@ impl From<VoteDir> for i8 {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct VoteScore {
     pub up: i64,
     pub down: i64,
@@ -120,7 +120,7 @@ impl VoteScore {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct PostTags {
     pub general: Vec<String>,
     pub species: Vec<String>,
@@ -131,7 +131,7 @@ pub struct PostTags {
     pub meta: Vec<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct PostFlags {
     #[serde(deserialize_with = "nullable_bool_from_json")]
     pub pending: bool,
@@ -147,7 +147,7 @@ pub struct PostFlags {
     pub deleted: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone, Copy)]
 pub enum PostRating {
     #[serde(rename = "s")]
     Safe,
@@ -157,7 +157,7 @@ pub enum PostRating {
     Explicit,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct PostRelationships {
     pub parent_id: Option<u64>,
     pub has_children: bool,
@@ -166,7 +166,7 @@ pub struct PostRelationships {
 }
 
 /// Structure representing a post.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
 pub struct Post {
     pub id: u64,
     pub created_at: DateTime<Utc>,
@@ -250,7 +250,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SearchPage {
     Page(u64),
     BeforePost(u64),
