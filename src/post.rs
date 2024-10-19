@@ -637,6 +637,25 @@ impl Client {
         serde_json::from_value(value).map_err(|e| Error::Serial(format!("{}", e)))
     }
 
+    /// Mark a [`Post`] (identified by `id`) as no longer particularly liked.
+    ///
+    /// ```no_run
+    /// # use {
+    /// #     rs621::client::Client,
+    /// #     futures::prelude::*,
+    /// # };
+    /// # #[tokio::main]
+    /// # async fn main() -> rs621::error::Result<()> {
+    /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
+    ///
+    /// client.post_unfavorite(1234).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn post_unfavorite(&self, id: u64) -> Result<(), Error> {
+        self.delete(&format!("/favorites/{}.json", id)).await?;
+        Ok(())
+    }
+
     /// Vote a [`Post`] (identified by `id`) up or down.
     ///
     /// Use [`VoteDir::Toggle`] to clear an existing vote.
@@ -744,6 +763,21 @@ mod tests {
             client.post_favorite(3758515).await.unwrap(),
             serde_json::from_value(expected).unwrap(),
         );
+    }
+
+    #[tokio::test]
+    async fn post_unfavorite() {
+        let mut client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+        client.login("foo".into(), "bar".into());
+
+        let _m = mock(
+            "POST",
+            Matcher::Exact("/favorites/3758515.json?login=foo&api_key=bar".into()),
+        )
+        .match_body("_method=delete")
+        .create();
+
+        client.post_unfavorite(3758515).await.unwrap();
     }
 
     #[tokio::test]
