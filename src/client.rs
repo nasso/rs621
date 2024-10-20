@@ -6,7 +6,8 @@ mod rate_limit;
 mod rate_limit;
 
 use futures::Future;
-use reqwest::Url;
+use reqwest::{Response, Url};
+use serde::Serialize;
 
 use {
     super::error::{Error, Result},
@@ -138,7 +139,7 @@ impl Client {
         Ok(url)
     }
 
-    pub(crate) async fn post_form<T>(&self, endpoint: &str, body: &T) -> Result<serde_json::Value>
+    async fn post_response<T>(&self, endpoint: &str, body: &T) -> Result<Response>
     where
         T: serde::Serialize,
     {
@@ -162,9 +163,7 @@ impl Client {
                     .map_err(|e| Error::CannotSendRequest(format!("{}", e)))?;
 
                 if res.status().is_success() {
-                    res.json()
-                        .await
-                        .map_err(|e| Error::Serial(format!("{}", e)))
+                    Ok(res)
                 } else {
                     Err(Error::Http {
                         url,
@@ -177,6 +176,30 @@ impl Client {
                 }
             })
             .await
+    }
+
+    pub(crate) async fn post_form<T>(&self, endpoint: &str, body: &T) -> Result<serde_json::Value>
+    where
+        T: serde::Serialize,
+    {
+        self.post_response(endpoint, body)
+            .await?
+            .json()
+            .await
+            .map_err(|e| Error::Serial(format!("{e}")))
+    }
+
+    pub(crate) async fn delete(&self, endpoint: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct Form {
+            _method: &'static str,
+        }
+
+        // Can't use HTTP DELETE because e621's CORS headers aren't permissive enough. Thankfully
+        // ruby on rails has a workaround for exactly this purpose.
+        self.post_response(endpoint, &Form { _method: "delete" })
+            .await?;
+        Ok(())
     }
 
     pub fn get_json_endpoint(
