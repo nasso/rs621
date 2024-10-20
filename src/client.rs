@@ -186,7 +186,7 @@ impl Client {
             .await?
             .json()
             .await
-            .map_err(|e| Error::Serial(format!("{}", e)))
+            .map_err(|e| Error::Serial(format!("{e}")))
     }
 
     pub(crate) async fn delete(&self, endpoint: &str) -> Result<()> {
