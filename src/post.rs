@@ -652,7 +652,7 @@ impl Client {
     /// # Ok(()) }
     /// ```
     pub async fn post_unfavorite(&self, id: u64) -> Result<(), Error> {
-        self.delete(&format!("/favorites/{}.json", id)).await?;
+        self.delete(&format!("/favorites/{id}.json")).await?;
         Ok(())
     }
 
