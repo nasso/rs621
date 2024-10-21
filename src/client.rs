@@ -367,6 +367,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_json_endpoint_query_success() {
+        #[derive(Serialize)]
+        struct Query {
+            id: u64,
+        }
+
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+
+        let _m = mock("GET", "/post/show.json?id=8595")
+            .with_body(r#"{"dummy":"json"}"#)
+            .create();
+
+        let query = Query { id: 8595 };
+        assert_eq!(
+            client
+                .get_json_endpoint_query("/post/show.json", &query)
+                .await,
+            Ok(serde_json::json!({
+                "dummy": "json",
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_json_endpoint_query_http_error() {
+        #[derive(Serialize)]
+        struct Query {
+            id: u64,
+        }
+
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+
+        // note: these are still using old endpoint but it doesn't matter here
+        let _m = mock("GET", "/post/show.json?id=8595")
+            .with_status(500)
+            .with_body(r#"{"success":false,"reason":"foo"}"#)
+            .create();
+
+        let server_url = Url::parse(&mockito::server_url()).unwrap();
+
+        let query = Query { id: 8595 };
+        assert_eq!(
+            client
+                .get_json_endpoint_query::<_, serde_json::Value>("/post/show.json", &query)
+                .await,
+            Err(crate::error::Error::Http {
+                url: server_url.join("/post/show.json?id=8595").unwrap(),
+                code: 500,
+                reason: Some(String::from("foo"))
+            })
+        );
+    }
+
+    #[tokio::test]
     async fn create_client_with_proxy_works() {
         assert!(Client::with_proxy(
             &mockito::server_url(),
