@@ -1,13 +1,11 @@
-use futures::Future;
+use super::REQ_COOLDOWN_DURATION;
+
+use std::future::Future;
 
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, MutexGuard};
-use tokio::time::{sleep_until, Duration, Instant};
-
-/// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
-/// so the lowest safe value we can have here is 500 ms.
-const REQ_COOLDOWN_DURATION: Duration = Duration::from_millis(600);
+use tokio::time::{sleep_until, Instant};
 
 #[derive(Debug, Clone, Default)]
 pub struct RateLimit {

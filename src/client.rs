@@ -1,9 +1,19 @@
-#[cfg(feature = "rate-limit")]
+#[cfg(all(target_family = "wasm", feature = "rate-limit"))]
+#[path = "client/gloo_rate_limit.rs"]
+mod rate_limit;
+
+#[cfg(all(not(target_family = "wasm"), feature = "rate-limit"))]
+#[path = "client/tokio_rate_limit.rs"]
 mod rate_limit;
 
 #[cfg(not(feature = "rate-limit"))]
 #[path = "client/dummy_rate_limit.rs"]
 mod rate_limit;
+
+/// Forced cool down duration performed at every request. E621 allows at most 2 requests per second,
+/// so the lowest safe value we can have here is 500 ms.
+#[cfg(feature = "rate-limit")]
+const REQ_COOLDOWN_DURATION: std::time::Duration = std::time::Duration::from_millis(600);
 
 use futures::Future;
 use reqwest::{Response, Url};
@@ -11,7 +21,7 @@ use serde::Serialize;
 
 use {
     super::error::{Error, Result},
-    reqwest::header::{HeaderMap, HeaderValue},
+    reqwest::header::HeaderMap,
 };
 
 #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
@@ -29,7 +39,7 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
         headers.insert(
             reqwest::header::USER_AGENT,
-            HeaderValue::from_bytes(user_agent.as_ref())
+            reqwest::header::HeaderValue::from_bytes(user_agent.as_ref())
                 .map_err(|e| Error::InvalidHeaderValue(format!("{}", e)))?,
         );
 
