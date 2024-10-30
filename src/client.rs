@@ -28,12 +28,12 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use std::{fmt, num::ParseIntError, str::FromStr};
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+#[cfg(target_family = "wasm")]
 fn create_header_map<T: AsRef<[u8]>>(_user_agent: T) -> Result<HeaderMap> {
     Ok(HeaderMap::new())
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     if user_agent.as_ref() == b"" {
         Err(Error::CannotCreateClient(String::from(
@@ -51,12 +51,12 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     }
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 fn create_extra_query<T: AsRef<[u8]>>(_user_agent: T) -> Result<Vec<(String, String)>> {
     Ok(Default::default())
 }
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+#[cfg(target_family = "wasm")]
 fn create_extra_query<T: AsRef<[u8]>>(user_agent: T) -> Result<Vec<(String, String)>> {
     let value = std::str::from_utf8(user_agent.as_ref())
         .map_err(|e| Error::InvalidHeaderValue(format!("{}", e)))?;
@@ -64,10 +64,10 @@ fn create_extra_query<T: AsRef<[u8]>>(user_agent: T) -> Result<Vec<(String, Stri
     Ok(vec![("_client".into(), value.into())])
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>> + Send>;
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+#[cfg(target_family = "wasm")]
 pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>>>;
 
 /// Where to begin returning results from in paginated requests.
@@ -122,10 +122,10 @@ impl Client {
     fn create(url: &str, user_agent: impl AsRef<[u8]>, proxy: Option<&str>) -> Result<Self> {
         let client = reqwest::Client::builder();
         let client = match proxy {
-            #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+            #[cfg(target_family = "wasm")]
             Some(_) => panic!("proxies are not supported in wasm"),
 
-            #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+            #[cfg(not(target_family = "wasm"))]
             Some(proxy) => {
                 let proxy = reqwest::Proxy::https(proxy)
                     .map_err(|e| Error::CannotCreateClient(format!("{}", e)))?;

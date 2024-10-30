@@ -344,7 +344,7 @@ impl Client {
     /// }
     /// # Ok(()) }
     /// ```
-    #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+    #[cfg(not(target_family = "wasm"))]
     pub fn tag_search(
         &self,
         query: Query,
@@ -378,7 +378,7 @@ impl Client {
     /// }
     /// # Ok(()) }
     /// ```
-    #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+    #[cfg(target_family = "wasm")]
     pub fn tag_search(&self, query: Query) -> impl Stream<Item = Rs621Result<Tag>> + '_ {
         // TODO: There should be a way to use `try_unfold` here instead.
         unfold(Some(query), move |query| self.tag_search_page(query))
