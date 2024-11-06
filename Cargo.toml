@@ -4,6 +4,7 @@ version = "0.7.0-alpha1"
 authors = ["nasso <nassomails@gmail.com>"]
 edition = "2018"
 description = "Rust crate for the E621 API (a large online archive of furry art)."
+rust-version = "1.70"
 repository = "https://github.com/nasso/rs621"
 readme = "README.md"
 keywords = ["e621", "e926", "furry", "api", "client"]
