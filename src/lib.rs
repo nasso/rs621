@@ -101,3 +101,6 @@ pub mod post;
 
 /// Pool management.
 pub mod pool;
+
+/// Tag management.
+pub mod tag;

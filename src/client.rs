@@ -15,21 +15,25 @@ mod rate_limit;
 #[cfg(feature = "rate-limit")]
 const REQ_COOLDOWN_DURATION: std::time::Duration = std::time::Duration::from_millis(600);
 
+use crate::error::{Error, Result};
+
 use futures::Future;
+
+use reqwest::header::HeaderMap;
 use reqwest::{Response, Url};
+
 use serde::Serialize;
 
-use {
-    super::error::{Error, Result},
-    reqwest::header::HeaderMap,
-};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+use std::{fmt, num::ParseIntError, str::FromStr};
+
+#[cfg(target_family = "wasm")]
 fn create_header_map<T: AsRef<[u8]>>(_user_agent: T) -> Result<HeaderMap> {
     Ok(HeaderMap::new())
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     if user_agent.as_ref() == b"" {
         Err(Error::CannotCreateClient(String::from(
@@ -47,12 +51,12 @@ fn create_header_map<T: AsRef<[u8]>>(user_agent: T) -> Result<HeaderMap> {
     }
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 fn create_extra_query<T: AsRef<[u8]>>(_user_agent: T) -> Result<Vec<(String, String)>> {
     Ok(Default::default())
 }
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+#[cfg(target_family = "wasm")]
 fn create_extra_query<T: AsRef<[u8]>>(user_agent: T) -> Result<Vec<(String, String)>> {
     let value = std::str::from_utf8(user_agent.as_ref())
         .map_err(|e| Error::InvalidHeaderValue(format!("{}", e)))?;
@@ -60,11 +64,48 @@ fn create_extra_query<T: AsRef<[u8]>>(user_agent: T) -> Result<Vec<(String, Stri
     Ok(vec![("_client".into(), value.into())])
 }
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>> + Send>;
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+#[cfg(target_family = "wasm")]
 pub(crate) type QueryFuture = Box<dyn Future<Output = Result<serde_json::Value>>>;
+
+/// Where to begin returning results from in paginated requests.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, SerializeDisplay, DeserializeFromStr)]
+pub enum Cursor {
+    /// Begin at the given page. Actual offset depends on page size.
+    Page(u64),
+
+    /// Return page size items ordered before the given id.
+    Before(u64),
+
+    /// Return page size items ordered after the given id.
+    After(u64),
+}
+
+impl FromStr for Cursor {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let result = match s.chars().next() {
+            Some('a') => Self::After(s[1..].parse()?),
+            Some('b') => Self::Before(s[1..].parse()?),
+            None | Some(_) => Self::Page(s.parse()?),
+        };
+
+        Ok(result)
+    }
+}
+
+impl fmt::Display for Cursor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Page(p) => write!(f, "{p}"),
+            Self::Before(p) => write!(f, "b{p}"),
+            Self::After(p) => write!(f, "a{p}"),
+        }
+    }
+}
 
 /// Client struct.
 #[derive(Debug)]
@@ -81,10 +122,10 @@ impl Client {
     fn create(url: &str, user_agent: impl AsRef<[u8]>, proxy: Option<&str>) -> Result<Self> {
         let client = reqwest::Client::builder();
         let client = match proxy {
-            #[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+            #[cfg(target_family = "wasm")]
             Some(_) => panic!("proxies are not supported in wasm"),
 
-            #[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+            #[cfg(not(target_family = "wasm"))]
             Some(proxy) => {
                 let proxy = reqwest::Proxy::https(proxy)
                     .map_err(|e| Error::CannotCreateClient(format!("{}", e)))?;
@@ -212,6 +253,42 @@ impl Client {
         Ok(())
     }
 
+    pub(crate) async fn get_json_endpoint_query<T, R>(&self, endpoint: &str, query: &T) -> Result<R>
+    where
+        T: serde::Serialize,
+        R: serde::de::DeserializeOwned,
+    {
+        let url = self.url(endpoint)?;
+        let future = self
+            .client
+            .get(url.clone())
+            .query(query)
+            .headers(self.headers.clone())
+            .send();
+
+        let res = self
+            .rate_limit
+            .clone()
+            .check(future)
+            .await
+            .map_err(|x| Error::CannotSendRequest(x.to_string()))?;
+
+        if res.status().is_success() {
+            res.json()
+                .await
+                .map_err(|e| Error::Serial(format!("{}", e)))
+        } else {
+            Err(Error::Http {
+                url: res.url().clone(),
+                code: res.status().as_u16(),
+                reason: match res.json::<serde_json::Value>().await {
+                    Ok(v) => v["reason"].as_str().map(ToString::to_string),
+                    Err(_) => None,
+                },
+            })
+        }
+    }
+
     pub fn get_json_endpoint(
         &self,
         endpoint: &str,
@@ -285,6 +362,60 @@ mod tests {
                 let mut m = serde_json::Map::new();
                 m.insert(String::from("dummy"), "json".into());
                 m.into()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn get_json_endpoint_query_success() {
+        #[derive(Serialize)]
+        struct Query {
+            id: u64,
+        }
+
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+
+        let _m = mock("GET", "/post/show.json?id=8595")
+            .with_body(r#"{"dummy":"json"}"#)
+            .create();
+
+        let query = Query { id: 8595 };
+        assert_eq!(
+            client
+                .get_json_endpoint_query("/post/show.json", &query)
+                .await,
+            Ok(serde_json::json!({
+                "dummy": "json",
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_json_endpoint_query_http_error() {
+        #[derive(Serialize)]
+        struct Query {
+            id: u64,
+        }
+
+        let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
+
+        // note: these are still using old endpoint but it doesn't matter here
+        let _m = mock("GET", "/post/show.json?id=8595")
+            .with_status(500)
+            .with_body(r#"{"success":false,"reason":"foo"}"#)
+            .create();
+
+        let server_url = Url::parse(&mockito::server_url()).unwrap();
+
+        let query = Query { id: 8595 };
+        assert_eq!(
+            client
+                .get_json_endpoint_query::<_, serde_json::Value>("/post/show.json", &query)
+                .await,
+            Err(crate::error::Error::Http {
+                url: server_url.join("/post/show.json?id=8595").unwrap(),
+                code: 500,
+                reason: Some(String::from("foo"))
             })
         );
     }

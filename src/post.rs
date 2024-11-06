@@ -2,7 +2,7 @@ use crate::error::Error;
 
 use {
     super::{
-        client::{Client, QueryFuture},
+        client::{Client, Cursor, QueryFuture},
         error::Result as Rs621Result,
     },
     chrono::{offset::Utc, DateTime},
@@ -250,13 +250,6 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum SearchPage {
-    Page(u64),
-    BeforePost(u64),
-    AfterPost(u64),
-}
-
 /// Iterator returning posts from a search query.
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -269,13 +262,13 @@ pub struct PostSearchStream<'a> {
     #[derivative(Debug = "ignore")]
     query_future: Option<Pin<QueryFuture>>,
 
-    next_page: SearchPage,
+    next_page: Cursor,
     chunk: Vec<Rs621Result<Post>>,
     ended: bool,
 }
 
 impl<'a> PostSearchStream<'a> {
-    fn new<T: Into<Query>>(client: &'a Client, query: T, page: SearchPage) -> Self {
+    fn new<T: Into<Query>>(client: &'a Client, query: T, page: Cursor) -> Self {
         PostSearchStream {
             client: client,
             query: query.into(),
@@ -332,16 +325,14 @@ impl<'a> Stream for PostSearchStream<'a> {
                                 // we now know what will be the next page
                                 this.next_page = if this.query.ordered {
                                     match this.next_page {
-                                        SearchPage::Page(i) => SearchPage::Page(i + 1),
-                                        _ => SearchPage::Page(1),
+                                        Cursor::Page(i) => Cursor::Page(i + 1),
+                                        _ => Cursor::Page(1),
                                     }
                                 } else {
                                     match this.next_page {
-                                        SearchPage::Page(_) => SearchPage::BeforePost(last_id),
-                                        SearchPage::BeforePost(_) => {
-                                            SearchPage::BeforePost(last_id)
-                                        }
-                                        SearchPage::AfterPost(_) => SearchPage::AfterPost(last_id),
+                                        Cursor::Page(_) => Cursor::Before(last_id),
+                                        Cursor::Before(_) => Cursor::Before(last_id),
+                                        Cursor::After(_) => Cursor::After(last_id),
                                     }
                                 };
 
@@ -386,9 +377,9 @@ impl<'a> Stream for PostSearchStream<'a> {
                         "/posts.json?limit={}&page={}&tags={}",
                         ITER_CHUNK_SIZE,
                         match this.next_page {
-                            SearchPage::Page(i) => format!("{}", i),
-                            SearchPage::BeforePost(i) => format!("b{}", i),
-                            SearchPage::AfterPost(i) => format!("a{}", i),
+                            Cursor::Page(i) => format!("{i}"),
+                            Cursor::Before(i) => format!("b{i}"),
+                            Cursor::After(i) => format!("a{i}"),
                         },
                         this.query.url_encoded_tags
                     );
@@ -569,7 +560,7 @@ impl Client {
     /// # Ok(()) }
     /// ```
     pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostSearchStream<'a> {
-        self.post_search_from_page(tags, SearchPage::Page(1))
+        self.post_search_from_page(tags, Cursor::Page(1))
     }
 
     /// Returns a Stream over all the posts matching the search query, starting from the given page.
@@ -579,13 +570,13 @@ impl Client {
     /// #     rs621::{client::Client, post::PostRating},
     /// #     futures::prelude::*,
     /// # };
-    /// use rs621::post::SearchPage;
+    /// use rs621::client::Cursor;
     /// # #[tokio::main]
     /// # async fn main() -> rs621::error::Result<()> {
     /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
     ///
     /// let mut post_stream = client
-    ///     .post_search_from_page(&["fluffy", "rating:s"][..], SearchPage::BeforePost(123456))
+    ///     .post_search_from_page(&["fluffy", "rating:s"][..], Cursor::Before(123456))
     ///     .take(3);
     ///
     /// while let Some(post) = post_stream.next().await {
@@ -598,7 +589,7 @@ impl Client {
     pub fn post_search_from_page<'a, T: Into<Query>>(
         &'a self,
         tags: T,
-        page: SearchPage,
+        page: Cursor,
     ) -> PostSearchStream<'a> {
         PostSearchStream::new(self, tags, page)
     }
@@ -890,7 +881,7 @@ mod tests {
 
         assert_eq!(
             client
-                .post_search_from_page(query, SearchPage::BeforePost(2269211))
+                .post_search_from_page(query, Cursor::Before(2269211))
                 .take(80)
                 .collect::<Vec<_>>()
                 .await,
