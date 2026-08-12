@@ -1,5 +1,3 @@
-use crate::error::Error;
-
 use {
     super::{
         client::{Client, QueryFuture},
@@ -251,7 +249,7 @@ impl<'a> Stream for PoolStream<'a> {
                                         Ok(res) => {
                                             res.into_iter().rev().map(|pool| Ok(pool)).collect()
                                         }
-                                        Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
+                                        Err(e) => vec![Err(e.into())],
                                     };
 
                                 // mark the stream as ended if there was no pools
@@ -345,13 +343,10 @@ mod tests {
     async fn pool_search() {
         let client = Client::new(&mockito::server_url(), b"rs621/unit_test").unwrap();
 
-        let expected: Vec<Rs621Result<Pool>> = serde_json::from_str::<PoolSearchApiResponse>(
-            include_str!("mocked/pool_search-foo.json"),
-        )
-        .unwrap()
-        .into_iter()
-        .map(|x| Ok(x))
-        .collect();
+        let expected: Vec<Pool> = serde_json::from_str::<PoolSearchApiResponse>(include_str!(
+            "mocked/pool_search-foo.json"
+        ))
+        .unwrap();
 
         let _m = [
             mock("GET", "/pools.json?page=1&search%5Bname_matches%5D=foo")
@@ -364,10 +359,11 @@ mod tests {
         ];
 
         // Should all contain foo in the name
-        let pools: Vec<Rs621Result<Pool>> = client
+        let pools: Vec<Pool> = client
             .pool_search(PoolSearch::new().name_matches("foo"))
-            .collect()
-            .await;
+            .try_collect()
+            .await
+            .unwrap();
 
         assert_eq!(pools, expected);
     }

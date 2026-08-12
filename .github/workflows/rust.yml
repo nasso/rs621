@@ -11,15 +11,24 @@ env:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        rust-version: ["1.70", "stable"]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v2
       - name: Install OpenSSL
         run: sudo apt-get install libssl-dev
+      - name: Install Rust
+        run: rustup default ${{ matrix.rust-version }}
+      - name: Add Target
+        run: rustup target add wasm32-unknown-unknown
       - name: Build
         run: cargo build --verbose
       - name: Run tests (All Features)
         run: cargo test --verbose --all-features
       - name: Run tests (No Default Features)
         run: cargo test --verbose --no-default-features
+      - name: Build (wasm32)
+        run: cargo build --verbose --target wasm32-unknown-unknown

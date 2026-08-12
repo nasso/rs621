@@ -2,7 +2,7 @@ use crate::error::Error;
 
 use {
     super::{
-        client::{Client, QueryFuture},
+        client::{Client, Cursor, QueryFuture},
         error::Result as Rs621Result,
     },
     chrono::{offset::Utc, DateTime},
@@ -22,18 +22,31 @@ use {
 /// Chunk size used for iterators performing requests
 const ITER_CHUNK_SIZE: u64 = 320;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(from = "String")]
+#[non_exhaustive]
 pub enum PostFileExtension {
-    #[serde(rename = "jpg")]
     Jpeg,
-    #[serde(rename = "png")]
     Png,
-    #[serde(rename = "gif")]
     Gif,
-    #[serde(rename = "swf")]
     Swf,
-    #[serde(rename = "webm")]
     WebM,
+    Mp4,
+    Other(String),
+}
+
+impl From<String> for PostFileExtension {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "jpg" => Self::Jpeg,
+            "png" => Self::Png,
+            "gif" => Self::Gif,
+            "swf" => Self::Swf,
+            "webm" => Self::WebM,
+            "mp4" => Self::Mp4,
+            _ => Self::Other(value),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -191,14 +204,16 @@ pub struct Post {
     pub is_favorited: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-struct PostListApiResponse {
-    pub posts: Vec<Post>,
+#[derive(Debug, PartialEq, Eq, Deserialize, Clone)]
+#[non_exhaustive]
+pub struct PostFavorite {
+    pub post_id: u64,
+    pub favorite_count: u64,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
-struct PostShowApiResponse {
-    pub post: Post,
+struct PostListApiResponse {
+    pub posts: Vec<Post>,
 }
 
 fn nullable_bool_from_json<'de, D>(de: D) -> Result<bool, D::Error>
@@ -250,13 +265,6 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum SearchPage {
-    Page(u64),
-    BeforePost(u64),
-    AfterPost(u64),
-}
-
 /// Iterator returning posts from a search query.
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -269,13 +277,13 @@ pub struct PostSearchStream<'a> {
     #[derivative(Debug = "ignore")]
     query_future: Option<Pin<QueryFuture>>,
 
-    next_page: SearchPage,
+    next_page: Cursor,
     chunk: Vec<Rs621Result<Post>>,
     ended: bool,
 }
 
 impl<'a> PostSearchStream<'a> {
-    fn new<T: Into<Query>>(client: &'a Client, query: T, page: SearchPage) -> Self {
+    fn new<T: Into<Query>>(client: &'a Client, query: T, page: Cursor) -> Self {
         PostSearchStream {
             client: client,
             query: query.into(),
@@ -321,7 +329,7 @@ impl<'a> Stream for PostSearchStream<'a> {
                                             .rev()
                                             .map(|post| Ok(post))
                                             .collect(),
-                                        Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
+                                        Err(e) => vec![Err(e.into())],
                                     };
 
                                 let last_id = match this.chunk.first() {
@@ -332,16 +340,14 @@ impl<'a> Stream for PostSearchStream<'a> {
                                 // we now know what will be the next page
                                 this.next_page = if this.query.ordered {
                                     match this.next_page {
-                                        SearchPage::Page(i) => SearchPage::Page(i + 1),
-                                        _ => SearchPage::Page(1),
+                                        Cursor::Page(i) => Cursor::Page(i + 1),
+                                        _ => Cursor::Page(1),
                                     }
                                 } else {
                                     match this.next_page {
-                                        SearchPage::Page(_) => SearchPage::BeforePost(last_id),
-                                        SearchPage::BeforePost(_) => {
-                                            SearchPage::BeforePost(last_id)
-                                        }
-                                        SearchPage::AfterPost(_) => SearchPage::AfterPost(last_id),
+                                        Cursor::Page(_) => Cursor::Before(last_id),
+                                        Cursor::Before(_) => Cursor::Before(last_id),
+                                        Cursor::After(_) => Cursor::After(last_id),
                                     }
                                 };
 
@@ -386,9 +392,9 @@ impl<'a> Stream for PostSearchStream<'a> {
                         "/posts.json?limit={}&page={}&tags={}",
                         ITER_CHUNK_SIZE,
                         match this.next_page {
-                            SearchPage::Page(i) => format!("{}", i),
-                            SearchPage::BeforePost(i) => format!("b{}", i),
-                            SearchPage::AfterPost(i) => format!("a{}", i),
+                            Cursor::Page(i) => format!("{i}"),
+                            Cursor::Before(i) => format!("b{i}"),
+                            Cursor::After(i) => format!("a{i}"),
                         },
                         this.query.url_encoded_tags
                     );
@@ -475,7 +481,7 @@ where
                                             .rev()
                                             .map(|post| Ok(post))
                                             .collect(),
-                                        Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
+                                        Err(e) => vec![Err(e.into())],
                                     };
 
                                 QueryPollRes::NotFetching
@@ -569,7 +575,7 @@ impl Client {
     /// # Ok(()) }
     /// ```
     pub fn post_search<'a, T: Into<Query>>(&'a self, tags: T) -> PostSearchStream<'a> {
-        self.post_search_from_page(tags, SearchPage::Page(1))
+        self.post_search_from_page(tags, Cursor::Page(1))
     }
 
     /// Returns a Stream over all the posts matching the search query, starting from the given page.
@@ -579,13 +585,13 @@ impl Client {
     /// #     rs621::{client::Client, post::PostRating},
     /// #     futures::prelude::*,
     /// # };
-    /// use rs621::post::SearchPage;
+    /// use rs621::client::Cursor;
     /// # #[tokio::main]
     /// # async fn main() -> rs621::error::Result<()> {
     /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
     ///
     /// let mut post_stream = client
-    ///     .post_search_from_page(&["fluffy", "rating:s"][..], SearchPage::BeforePost(123456))
+    ///     .post_search_from_page(&["fluffy", "rating:s"][..], Cursor::Before(123456))
     ///     .take(3);
     ///
     /// while let Some(post) = post_stream.next().await {
@@ -598,7 +604,7 @@ impl Client {
     pub fn post_search_from_page<'a, T: Into<Query>>(
         &'a self,
         tags: T,
-        page: SearchPage,
+        page: Cursor,
     ) -> PostSearchStream<'a> {
         PostSearchStream::new(self, tags, page)
     }
@@ -614,11 +620,11 @@ impl Client {
     /// # async fn main() -> rs621::error::Result<()> {
     /// let client = Client::new("https://e926.net", "MyProject/1.0 (by username on e621)")?;
     ///
-    /// let post = client.post_favorite(1234).await?;
-    /// assert_eq!(post.id, 1234);
+    /// let response = client.post_favorite(1234).await?;
+    /// assert_eq!(response.post_id, 1234);
     /// # Ok(()) }
     /// ```
-    pub async fn post_favorite(&self, id: u64) -> Result<Post, Error> {
+    pub async fn post_favorite(&self, id: u64) -> Result<PostFavorite, Error> {
         #[derive(Serialize)]
         struct Form {
             post_id: u64,
@@ -628,13 +634,7 @@ impl Client {
             .post_form("/favorites.json", &Form { post_id: id })
             .await?;
 
-        let value = response
-            .as_object()
-            .and_then(|o| o.get("post"))
-            .cloned()
-            .ok_or_else(|| Error::Serial("unexpected response".into()))?;
-
-        serde_json::from_value(value).map_err(|e| Error::Serial(format!("{}", e)))
+        Ok(serde_json::from_value(response)?)
     }
 
     /// Mark a [`Post`] (identified by `id`) as no longer particularly liked.
@@ -698,7 +698,7 @@ impl Client {
             )
             .await?;
 
-        serde_json::from_value(response).map_err(|e| Error::Serial(format!("{}", e)))
+        Ok(serde_json::from_value(response)?)
     }
 }
 
@@ -750,19 +750,10 @@ mod tests {
         .with_body(include_str!("mocked/favorite.json"))
         .create();
 
-        let expected =
-            serde_json::from_str::<serde_json::Value>(include_str!("mocked/favorite.json"))
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .get("post")
-                .cloned()
-                .unwrap();
+        let expected: PostFavorite =
+            serde_json::from_str(include_str!("mocked/favorite.json")).unwrap();
 
-        assert_eq!(
-            client.post_favorite(3758515).await.unwrap(),
-            serde_json::from_value(expected).unwrap(),
-        );
+        assert_eq!(client.post_favorite(3758515).await.unwrap(), expected,);
     }
 
     #[tokio::test]
@@ -802,8 +793,9 @@ mod tests {
             client
                 .post_search(query)
                 .take(100)
-                .collect::<Vec<_>>()
-                .await,
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
             serde_json::from_str::<PostListApiResponse>(include_str!(
                 "mocked/320_page-1_fluffy_rating-s_order-score.json"
             ))
@@ -811,7 +803,6 @@ mod tests {
             .posts
             .into_iter()
             .take(100)
-            .map(|x| Ok(x))
             .collect::<Vec<_>>()
         );
     }
@@ -851,8 +842,9 @@ mod tests {
             client
                 .post_search(query)
                 .take(400)
-                .collect::<Vec<_>>()
-                .await,
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
             serde_json::from_str::<PostListApiResponse>(PAGES[0])
                 .unwrap()
                 .posts
@@ -864,7 +856,6 @@ mod tests {
                         .into_iter()
                 )
                 .take(400)
-                .map(|x| Ok(x))
                 .collect::<Vec<_>>()
         );
     }
@@ -876,7 +867,7 @@ mod tests {
         let query = Query::from(&["fluffy", "rating:s"][..]);
         let response_json = include_str!("mocked/320_fluffy_rating-s_before-2269211.json");
         let response: PostListApiResponse = serde_json::from_str(response_json).unwrap();
-        let expected: Vec<_> = response.posts.into_iter().take(80).map(|x| Ok(x)).collect();
+        let expected: Vec<_> = response.posts.into_iter().take(80).collect();
 
         let _m = mock(
             "GET",
@@ -890,10 +881,11 @@ mod tests {
 
         assert_eq!(
             client
-                .post_search_from_page(query, SearchPage::BeforePost(2269211))
+                .post_search_from_page(query, Cursor::Before(2269211))
                 .take(80)
-                .collect::<Vec<_>>()
-                .await,
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
             expected
         );
     }
@@ -918,7 +910,6 @@ mod tests {
             .into_iter()
             .chain(responses[1].take().unwrap().posts.into_iter())
             .take(400)
-            .map(|x| Ok(x))
             .collect();
 
         let _m = [
@@ -946,8 +937,9 @@ mod tests {
             client
                 .post_search(query)
                 .take(400)
-                .collect::<Vec<_>>()
-                .await,
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
             expected
         );
     }
@@ -970,7 +962,12 @@ mod tests {
         .create();
 
         assert_eq!(
-            client.post_search(query).take(5).collect::<Vec<_>>().await,
+            client
+                .post_search(query)
+                .take(5)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
             vec![]
         );
     }
@@ -982,7 +979,7 @@ mod tests {
         let query = Query::from(&["fluffy", "rating:s"][..]);
         let response_json = include_str!("mocked/320_fluffy_rating-s.json");
         let response: PostListApiResponse = serde_json::from_str(response_json).unwrap();
-        let expected: Vec<_> = response.posts.into_iter().take(5).map(|x| Ok(x)).collect();
+        let expected: Vec<_> = response.posts.into_iter().take(5).collect();
 
         let _m = mock(
             "GET",
@@ -995,7 +992,12 @@ mod tests {
         .create();
 
         assert_eq!(
-            client.post_search(query).take(5).collect::<Vec<_>>().await,
+            client
+                .post_search(query)
+                .take(5)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
             expected
         );
     }
@@ -1015,9 +1017,10 @@ mod tests {
         assert_eq!(
             client
                 .get_posts(&[8595, 535, 2105, 1470])
-                .collect::<Vec<_>>()
-                .await,
-            expected.into_iter().map(|p| Ok(p)).collect::<Vec<_>>(),
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap(),
+            expected,
         );
     }
 }

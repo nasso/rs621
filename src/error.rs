@@ -1,6 +1,7 @@
 use url::Url;
 
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("Request to {url} returned HTTP code {code} (reason: {reason:?})")]
     Http {
@@ -9,8 +10,11 @@ pub enum Error {
         reason: Option<String>,
     },
 
-    #[error("Serialization error: {0}")]
-    Serial(String),
+    #[error("reqwest error: {0}")]
+    Reqwest(#[from] reqwest::Error),
+
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
 
     #[error("Couldn't send request: {0}")]
     CannotSendRequest(String),
