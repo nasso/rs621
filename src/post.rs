@@ -22,25 +22,11 @@ use {
 /// Chunk size used for iterators performing requests
 const ITER_CHUNK_SIZE: u64 = 320;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-pub enum PostFileExtension {
-    #[serde(rename = "jpg")]
-    Jpeg,
-    #[serde(rename = "png")]
-    Png,
-    #[serde(rename = "gif")]
-    Gif,
-    #[serde(rename = "swf")]
-    Swf,
-    #[serde(rename = "webm")]
-    WebM,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct PostFile {
     pub width: u64,
     pub height: u64,
-    pub ext: PostFileExtension,
+    pub ext: String,
     pub size: u64,
     pub md5: String,
     pub url: Option<String>,
