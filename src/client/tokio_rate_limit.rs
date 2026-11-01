@@ -24,7 +24,7 @@ impl<'a> Drop for Guard<'a> {
 }
 
 impl RateLimit {
-    async fn lock(&self) -> Guard {
+    async fn lock(&self) -> Guard<'_> {
         loop {
             let now = Instant::now();
 
