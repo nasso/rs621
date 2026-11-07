@@ -18,7 +18,7 @@ jobs:
       - name: Install OpenSSL
         run: sudo apt-get install libssl-dev
       - name: Build
-        run: cargo build --verbose
+        run: cargo clippy --verbose
       - name: Run tests (All Features)
         run: cargo test --verbose --all-features
       - name: Run tests (No Default Features)
