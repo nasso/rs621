@@ -263,7 +263,7 @@ pub struct PostSearchStream<'a> {
 impl<'a> PostSearchStream<'a> {
     fn new<T: Into<Query>>(client: &'a Client, query: T, page: SearchPage) -> Self {
         PostSearchStream {
-            client: client,
+            client,
             query: query.into(),
 
             query_url: None,
@@ -305,7 +305,7 @@ impl<'a> Stream for PostSearchStream<'a> {
                                             .posts
                                             .into_iter()
                                             .rev()
-                                            .map(|post| Ok(post))
+                                            .map(Ok)
                                             .collect(),
                                         Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
                                     };
@@ -459,7 +459,7 @@ where
                                             .posts
                                             .into_iter()
                                             .rev()
-                                            .map(|post| Ok(post))
+                                            .map(Ok)
                                             .collect(),
                                         Err(e) => vec![Err(Error::Serial(format!("{}", e)))],
                                     };
